@@ -52,7 +52,7 @@ jobs:
           "$tsduck\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
 
       - name: Build
-        run: msbuild msvc\dantto4k.sln /m /p:Configuration=Release /p:Platform=x64
+        run: msbuild msvc\dantto4k.sln /m /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143
 
       - name: Package
         shell: pwsh
