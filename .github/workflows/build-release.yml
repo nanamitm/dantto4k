@@ -1,0 +1,84 @@
+name: Build and release
+
+on:
+  push:
+    branches: [ "main" ]
+    tags: [ "v*" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows-x64:
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Install TSDuck
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $release = Invoke-RestMethod -Uri 'https://api.github.com/repos/tsduck/tsduck/releases/latest'
+          $asset = $release.assets |
+            Where-Object { $_.name -match '^TSDuck-Win64-.*\.exe$' } |
+            Select-Object -First 1
+          if (-not $asset) {
+            throw 'TSDuck Win64 installer was not found in the latest release.'
+          }
+
+          $installer = Join-Path $env:RUNNER_TEMP $asset.name
+          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $installer
+          Start-Process -FilePath $installer -ArgumentList '/S', '/all=true' -Wait
+
+          $tsduck = [Environment]::GetEnvironmentVariable('TSDUCK', 'Machine')
+          if (-not $tsduck) {
+            $tsduck = 'C:\Program Files\TSDuck'
+          }
+          if (-not (Test-Path (Join-Path $tsduck 'tsduck.props'))) {
+            throw "TSDuck development files were not found: $tsduck"
+          }
+
+          "TSDUCK=$tsduck" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "$tsduck\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+
+      - name: Build
+        run: msbuild msvc\dantto4k.sln /m /p:Configuration=Release /p:Platform=x64
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { $env:GITHUB_SHA.Substring(0, 7) }
+          $package = "dantto4k-$version-win64"
+          $stage = Join-Path $env:RUNNER_TEMP $package
+          New-Item -ItemType Directory -Path $stage | Out-Null
+
+          Copy-Item msvc\x64\Release\dantto4k.exe $stage
+          Copy-Item msvc\x64\Release\BonDriver_dantto4k.dll $stage
+          Copy-Item ini\* $stage -Recurse
+          Copy-Item README.md, LICENSE $stage
+
+          Compress-Archive -Path "$stage\*" -DestinationPath "$package.zip" -Force
+          "PACKAGE=$package.zip" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dantto4k-win64
+          path: ${{ env.PACKAGE }}
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.PACKAGE }}
