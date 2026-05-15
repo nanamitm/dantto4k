@@ -21,6 +21,10 @@ bool Emt::unpack(Common::ReadStream& stream) {
         sectionNumber = stream.get8U();
         lastSectionNumber = stream.get8U();
 
+        if (stream.leftBytes() < 4) {
+            return false;
+        }
+
         size_t descriptorsLength = stream.leftBytes() - 4;
         Common::ReadStream nstream(stream, descriptorsLength);
         if (!descriptors.unpack(nstream)) {

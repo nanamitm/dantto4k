@@ -153,6 +153,7 @@ bool AcasCard::ecm(const std::vector<uint8_t>& ecm, DecryptionKey& output) {
     }
     catch (const std::runtime_error& e) {
         std::cerr << e.what() << std::endl;
+        cardReset = true;
     }
 
     return false;

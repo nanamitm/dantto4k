@@ -23,6 +23,7 @@
 #include "mhServiceDescriptor.h"
 #include "aribUtil.h"
 #include "timeUtil.h"
+#include "timeUtil.h"
 #include "mhApplicationDescriptor.h"
 
 constexpr uint8_t convertVideoComponentType(uint8_t videoResolution, uint8_t videoAspectRatio) {
@@ -168,8 +169,6 @@ struct DescriptorConverter<MmtTlv::MhExtendedEventDescriptor> {
                 memcpy(&tsDescriptor[7 + pos], aribItemChars[i].data(), aribItemChars[i].size());
                 pos += aribItemChars[i].size();
             }
-
-            i++;
         }
 
         tsDescriptor[7 + pos] = static_cast<uint8_t>(textBlock.size());
@@ -303,12 +302,10 @@ struct DescriptorConverter<MmtTlv::MhSeriesDescriptor> {
             struct tm tm;
             EITDecodeMjd(mmtDescriptor.expireDate, &tm.tm_year, &tm.tm_mon, &tm.tm_mday);
 
-            try {
-                tsDescriptor.expire_date = ts::Time(tm.tm_year, tm.tm_mon, tm.tm_mday, 0, 0);
-            }
-            catch (const ts::Time::TimeError&) {
+            if (!isValidMjdDate(tm.tm_year, tm.tm_mon, tm.tm_mday)) {
                 return {};
             }
+            tsDescriptor.expire_date = ts::Time(tm.tm_year, tm.tm_mon, tm.tm_mday, 0, 0);
         }
 
         tsDescriptor.episode_number = mmtDescriptor.episodeNumber;
@@ -391,7 +388,7 @@ struct DescriptorConverter<MmtTlv::MhServiceDescriptor> {
         MmtTlv::Common::WriteStream s;
         s.put8U(0x48); // descriptor_tag
         s.put8U(static_cast<uint8_t>(descriptorLength)); // descriptor_length
-        s.put8U(1); // service_type
+        s.put8U(mmtDescriptor.serviceType); // service_type
         s.put8U(static_cast<uint8_t>(serviceProviderName.size())); // service_provider_name_length
         if (serviceProviderName.size()) {
             s.write(serviceProviderName); // service_provider_name

@@ -19,6 +19,10 @@ bool Ecm::unpack(Common::ReadStream& stream) {
         sectionNumber = stream.get8U();
         lastSectionNumber = stream.get8U();
 
+        if (stream.leftBytes() < 4) {
+            return false;
+        }
+
         ecmData.resize(stream.leftBytes() - 4);
         stream.read(ecmData.data(), stream.leftBytes() - 4);
 

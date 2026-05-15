@@ -219,6 +219,10 @@ uint32_t LocalSmartCard::transmit(const std::vector<uint8_t>& message, ApduRespo
         return result;
     }
 
+    if (recvLength < 2) {
+        throw std::runtime_error("SCardTransmit: response too short");
+    }
+
     uint8_t sw1 = recvBuffer[recvLength - 2];
     uint8_t sw2 = recvBuffer[recvLength - 1];
 
@@ -461,6 +465,10 @@ uint32_t RemoteSmartCard::transmit(const std::vector<uint8_t>& message, ApduResp
     }
 
     recvBuffer.resize(recvLength);
+
+    if (recvLength < 2) {
+        throw std::runtime_error("scardTransmit: response too short");
+    }
 
     uint8_t sw1 = recvBuffer[recvLength - 2];
     uint8_t sw2 = recvBuffer[recvLength - 1];

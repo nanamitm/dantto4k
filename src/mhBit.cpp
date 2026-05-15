@@ -32,7 +32,7 @@ bool MhBit::unpack(Common::ReadStream& stream) {
 
         stream.skip(firstDescriptorsLength);
 
-        while (stream.leftBytes() - 4 > 0) {
+        while (stream.leftBytes() > 4) {
             Broadcaster entry;
             if (!entry.unpack(stream)) {
                 return false;

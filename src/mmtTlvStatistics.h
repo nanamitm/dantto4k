@@ -24,6 +24,7 @@ public:
 		uint32_t assetType{0};
 		uint64_t count{0};
 		uint64_t drop{0};
+		uint64_t outputDrop{0};
 		uint8_t videoResolution{0};
 		uint8_t videoAspectRatio{0};
 		uint8_t audioComponentType{0};
@@ -154,6 +155,7 @@ public:
 
 			output = " - PacketId: " + oss.str() + ", ";
 			output += "Drop: " + std::to_string(drop) + ", ";
+			output += "OutputDrop: " + std::to_string(outputDrop) + ", ";
 			output += "Count: " + std::to_string(count);
 
 			std::string name = getName();

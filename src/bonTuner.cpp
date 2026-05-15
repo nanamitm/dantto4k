@@ -36,10 +36,12 @@ bool CBonTuner::init() {
 }
 
 const bool CBonTuner::OpenTuner(void) {
+	if (!pBonDriver2) return false;
 	return pBonDriver2->OpenTuner();
 }
 
 void CBonTuner::CloseTuner(void) {
+	if (!pBonDriver2) return;
 	pBonDriver2->CloseTuner();
 }
 
@@ -48,14 +50,17 @@ const bool CBonTuner::SetChannel(const uint8_t bCh) {
 }
 
 const float CBonTuner::GetSignalLevel(void) {
+	if (!pBonDriver2) return 0.0f;
 	return pBonDriver2->GetSignalLevel();
 }
 
 const uint32_t CBonTuner::WaitTsStream(const uint32_t dwTimeOut) {
+	if (!pBonDriver2) return 0;
 	return pBonDriver2->WaitTsStream(dwTimeOut);
 }
 
 const uint32_t CBonTuner::GetReadyCount(void) {
+	if (!pBonDriver2) return 0;
 	std::lock_guard<std::mutex> lock(mutex);
 	return pBonDriver2->GetReadyCount();
 }
@@ -115,22 +120,27 @@ void CBonTuner::PurgeTsStream(void) {
 	g_bonDriverContext.remuxOutput.clear();
 	g_bonDriverContext.demuxer.clear();
 
+	if (!pBonDriver2) return;
 	return pBonDriver2->PurgeTsStream();
 }
 
 const char* CBonTuner::GetTunerName(void) {
+	if (!pBonDriver2) return "";
 	return pBonDriver2->GetTunerName();
 }
 
 const bool CBonTuner::IsTunerOpening(void) {
+	if (!pBonDriver2) return false;
 	return pBonDriver2->IsTunerOpening();
 }
 
 const char* CBonTuner::EnumTuningSpace(const uint32_t dwSpace) {
+	if (!pBonDriver2) return nullptr;
 	return pBonDriver2->EnumTuningSpace(dwSpace);
 }
 
 const char* CBonTuner::EnumChannelName(const uint32_t dwSpace, const uint32_t dwChannel) {
+	if (!pBonDriver2) return nullptr;
 	return pBonDriver2->EnumChannelName(dwSpace, dwChannel);
 }
 
@@ -148,19 +158,27 @@ const bool CBonTuner::SetChannel(const uint32_t dwSpace, const uint32_t dwChanne
 		}
 
 		g_bonDriverContext.mmtsDumpFs = std::make_unique<std::ofstream>(config.mmtsDumpPath, std::ios::binary);
+		if (!g_bonDriverContext.mmtsDumpFs->is_open()) {
+			std::cerr << "Failed to open mmtsDumpPath: " << config.mmtsDumpPath << std::endl;
+			g_bonDriverContext.mmtsDumpFs.reset();
+		}
 	}
 
+	if (!pBonDriver2) return false;
 	return pBonDriver2->SetChannel(dwSpace, dwChannel);
 }
 
 const uint32_t CBonTuner::GetCurSpace(void) {
+	if (!pBonDriver2) return 0;
 	return pBonDriver2->GetCurSpace();
 }
 
 const uint32_t CBonTuner::GetCurChannel(void) {
+	if (!pBonDriver2) return 0;
 	return pBonDriver2->GetCurChannel();
 }
 
 void CBonTuner::Release(void) {
+	if (!pBonDriver2) return;
 	return pBonDriver2->Release();
 }

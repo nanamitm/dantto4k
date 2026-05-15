@@ -47,6 +47,7 @@ class RemuxerHandler : public MmtTlv::DemuxerHandler {
 public:
 	RemuxerHandler(MmtTlv::MmtTlvDemuxer& demuxer)
 		: demuxer(demuxer) {
+		duck.addStandards(ts::Standards::ISDB);
 	}
 
 	// MPU
@@ -76,6 +77,7 @@ public:
 	using OutputCallback = std::function<void(const uint8_t*, size_t)>;
 	void setOutputCallback(OutputCallback cb);
 	void clear();
+	uint64_t getAdtsDropCount() const { return adtsDropCount; }
 
 private:
 	enum class PesState {
@@ -93,6 +95,7 @@ private:
 	std::unordered_map<uint16_t, std::vector<uint8_t>> mapPesPendingData;
 	std::unordered_map<uint16_t, uint32_t> mapPesPacketIndex;
 	std::unordered_map<uint16_t, PesState> mapPesState;
+	uint64_t adtsDropCount{0};
 	int tsid{-1};
 	uint64_t lastPcr{};
 	uint64_t lastCaptionManagementDataPts{};

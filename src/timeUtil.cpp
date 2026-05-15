@@ -51,3 +51,22 @@ int EITConvertDuration(uint32_t i_duration) {
         convertFromBcd(i_duration >> 8) * 60 +
         convertFromBcd(i_duration);
 }
+
+bool isValidEITStartTime(const struct tm& t) {
+    // struct tm from EITConvertStartTime: tm_year=years since 1900, tm_mon=0-11
+    const int year = t.tm_year + BASE_YEAR;
+    const int mon  = t.tm_mon + 1;
+    return year >= 2000 && year <= 2100
+        && mon  >= 1    && mon  <= 12
+        && t.tm_mday >= 1 && t.tm_mday <= 31
+        && t.tm_hour >= 0 && t.tm_hour <= 23
+        && t.tm_min  >= 0 && t.tm_min  <= 59
+        && t.tm_sec  >= 0 && t.tm_sec  <= 59;
+}
+
+bool isValidMjdDate(int year, int mon, int mday) {
+    // year is absolute (e.g. 2024), mon is 1-based
+    return year >= 2000 && year <= 2100
+        && mon  >= 1    && mon  <= 12
+        && mday >= 1    && mday <= 31;
+}

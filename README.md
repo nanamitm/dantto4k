@@ -36,10 +36,18 @@ https://github.com/nekohkr/casproxyserver
 
 ## ビルド
 ### Windows
-/thirdpartyフォルダにtsduckとasio(v1.32.0)を準備します。
-下記のURLからtsduckのbinaryをダウンロードすることができます。
+#### 依存ライブラリの準備
 
-- https://github.com/tsduck/tsduck/
+TSDuck の公式インストーラーを使用してインストールします。
+- https://github.com/tsduck/tsduck/releases
+インストーラーは環境変数 `TSDUCK` を自動的に設定します。ビルドシステムはこの環境変数を使用するため、インストール後に追加の作業は不要です。
+
+asio の準備
+git submodule update --init
+
+#### ビルド
+Visual Studio 2022 で `msvc/dantto4k.sln` を開いてビルドします。
+
 ### Ubuntu
 
 ```bash

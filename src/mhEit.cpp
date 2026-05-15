@@ -26,7 +26,7 @@ bool MhEit::unpack(Common::ReadStream& stream)
         segmentLastSectionNumber = stream.get8U();
         lastTableId = stream.get8U();
 
-        while (stream.leftBytes() - 4 > 0) {
+        while (stream.leftBytes() > 4) {
             std::shared_ptr<Event> event = std::make_shared<Event>();
             if (!event->unpack(stream)) {
                 return false;

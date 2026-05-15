@@ -37,6 +37,9 @@ bool ADTSConverter::convert(const uint8_t* input, size_t size, std::vector<uint8
     int slotLength = 0;
     int i = 3 + 6;
     do {
+        if (i + 1 >= static_cast<int>(size)) {
+            return false;
+        }
         tmp = (input[i] & 0b00000111) << 5 | (input[i + 1] & 0b11111000) >> 3;
         slotLength += tmp;
         i++;
@@ -69,6 +72,9 @@ bool ADTSConverter::convert(const uint8_t* input, size_t size, std::vector<uint8
     output.data()[6] = (bufferFullness & 0b00000111111) << 2 |
         0/* rdb in frame */;
 
+    if (static_cast<size_t>(i) + slotLength + 1 > size) {
+        return false;
+    }
     for (int i2 = 0; i2 < slotLength; i2++) {
         output.data()[7 + i2] = (input[i + i2] & 0b00000111) << 5 | (input[i + i2 + 1] & 0b11111000) >> 3;
     }

@@ -38,12 +38,12 @@ bool MhCdt::unpack(Common::ReadStream& stream)
         }
         stream.skip(descriptorsLoopLength);
 
-        dataModuleByte.resize(stream.leftBytes() - 4);
-        stream.read(dataModuleByte.data(), stream.leftBytes() - 4);
-
         if (stream.leftBytes() < 4) {
             return false;
         }
+
+        dataModuleByte.resize(stream.leftBytes() - 4);
+        stream.read(dataModuleByte.data(), stream.leftBytes() - 4);
 
         crc32 = stream.getBe32U();
     }

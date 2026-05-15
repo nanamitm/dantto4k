@@ -9,14 +9,14 @@ namespace {
 HINSTANCE hModule = nullptr;
 
 std::string getConfigFilePath(void* hModule) {
-    char g_IniFilePath[_MAX_FNAME];
-    GetModuleFileNameA((HMODULE)hModule, g_IniFilePath, _MAX_FNAME);
+    char g_IniFilePath[_MAX_PATH];
+    GetModuleFileNameA((HMODULE)hModule, g_IniFilePath, _MAX_PATH);
 
     char drive[_MAX_DRIVE];
     char dir[_MAX_DIR];
     char fname[_MAX_FNAME];
     _splitpath_s(g_IniFilePath, drive, sizeof(drive), dir, sizeof(dir), fname, sizeof(fname), NULL, NULL);
-    sprintf(g_IniFilePath, "%s%s%s.ini\0", drive, dir, fname);
+    snprintf(g_IniFilePath, sizeof(g_IniFilePath), "%s%s%s.ini", drive, dir, fname);
 
     return g_IniFilePath;
 }
@@ -58,11 +58,26 @@ extern "C" __declspec(dllexport) IBonDriver* CreateBonDriver() {
     }
 
     g_bonDriverContext.handler.setOutputCallback([&](const uint8_t* data, size_t size) {
-        assert(size == 188);
-        g_bonDriverContext.remuxOutput.insert(g_bonDriverContext.remuxOutput.end(), data, data + size);
+        if (size == 188) {
+            g_bonDriverContext.remuxOutput.insert(g_bonDriverContext.remuxOutput.end(), data, data + size);
+        }
     });
     g_bonDriverContext.demuxer.setDemuxerHandler(g_bonDriverContext.handler);
-    g_bonDriverContext.bonTuner.init();
+
+    try {
+        if (!g_bonDriverContext.bonTuner.init()) {
+            std::cerr << "Failed to initialize BonTuner" << std::endl;
+            return nullptr;
+        }
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Exception in bonTuner.init(): " << e.what() << std::endl;
+        return nullptr;
+    }
+    catch (...) {
+        std::cerr << "Unknown exception in bonTuner.init()" << std::endl;
+        return nullptr;
+    }
 
     return &g_bonDriverContext.bonTuner;
 }

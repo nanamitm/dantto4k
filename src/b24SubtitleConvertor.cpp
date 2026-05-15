@@ -212,7 +212,9 @@ bool B24SubtitleConvertor::convert(const std::string& input, std::list<B24Subtit
                 }
 
 
-                unitDataByte.insert(unitDataByte.end(), encodedSplit[encodedSplitIndex].begin(), encodedSplit[encodedSplitIndex].end());
+                if (encodedSplitIndex < static_cast<int>(encodedSplit.size())) {
+                    unitDataByte.insert(unitDataByte.end(), encodedSplit[encodedSplitIndex].begin(), encodedSplit[encodedSplitIndex].end());
+                }
                 encodedSplitIndex++;
             }
         }

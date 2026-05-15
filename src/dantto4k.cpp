@@ -271,6 +271,9 @@ int main(int argc, char* argv[]) {
     progressReporter.finish();
     if (!args.noStats) {
         demuxer.printStatistics();
+        if (handler.getAdtsDropCount() > 0) {
+            std::cout << "ADTS conversion drop: " << handler.getAdtsDropCount() << std::endl;
+        }
     }
     demuxer.clear();
 

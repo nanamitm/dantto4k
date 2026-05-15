@@ -120,9 +120,9 @@ DemuxStatus MmtTlvDemuxer::demux(Common::ReadStream& stream) {
             mmtStat->count++;
         }
         else {
-            auto mmtStat = statistics.getMmtStat(mmtp.packetId);
-            if (mmtStat->lastPacketSequenceNumber + 1 != mmtp.packetSequenceNumber) {
-                mmtStat->drop++;
+            const uint32_t expected = mmtStat->lastPacketSequenceNumber + 1;
+            if (expected != mmtp.packetSequenceNumber) {
+                mmtStat->drop += mmtp.packetSequenceNumber - expected;
 
                 auto mmtStream = getStream(mmtp.packetId);
                 if (mmtStream) {
@@ -148,6 +148,7 @@ DemuxStatus MmtTlvDemuxer::demux(Common::ReadStream& stream) {
                     return DemuxStatus::WattingForEcm;
                 }
                 if (!casHandler->decrypt(mmtp)) {
+                    mmtStat->outputDrop++;
                     return DemuxStatus::WattingForEcm;
                 }
             }
@@ -796,7 +797,7 @@ void MmtTlvDemuxer::processMfuData(Common::ReadStream& stream) {
     MmtStream* mmtStream = getStream(mmtp.packetId);
     auto validator = getFragmentValidator(mmtp.packetId);
 
-    if (!mmtStream->mpuProcessor) {
+    if (!mmtStream || !mmtStream->mpuProcessor) {
         return;
     }
 
@@ -804,6 +805,10 @@ void MmtTlvDemuxer::processMfuData(Common::ReadStream& stream) {
     stream.read(data.data(), stream.leftBytes());
 
     const auto ret = mmtStream->mpuProcessor->process(*mmtStream, data, mpu.fragmentationIndicator);
+    if (!ret && (mpu.fragmentationIndicator == FragmentationIndicator::NotFragmented ||
+                 mpu.fragmentationIndicator == FragmentationIndicator::LastFragment)) {
+        statistics.getMmtStat(mmtp.packetId)->outputDrop++;
+    }
     if (ret) {
         const auto& mfuData = ret.value();
         auto* mmtStream = getStreamByIdx(mfuData.streamIndex);
@@ -862,9 +867,12 @@ void MmtTlvDemuxer::processSignalingMessages(Common::ReadStream& stream) {
             else
                 length = nstream.getBe16U();
 
+            if (length > nstream.leftBytes()) {
+                return;
+            }
             std::vector<uint8_t> message;
             message.resize(length);
-            stream.read(message.data(), length);
+            nstream.read(message.data(), length);
 
             if (assembler->assemble(message, signalingMessage.fragmentationIndicator, mmtp.packetSequenceNumber)) {
                 Common::ReadStream messageStream(assembler->data);

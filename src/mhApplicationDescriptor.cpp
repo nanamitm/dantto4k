@@ -12,8 +12,11 @@ bool MhApplicationDescriptor::unpack(Common::ReadStream& stream)
         Common::ReadStream nstream(stream, descriptorLength);
 
         applicationProfilesLength = nstream.get8U();
-        size_t leftBytes = nstream.leftBytes();
-        while (nstream.leftBytes() - (leftBytes - applicationProfilesLength) > 0) {
+        if (applicationProfilesLength > nstream.leftBytes()) {
+            return false;
+        }
+        const size_t profilesEnd = nstream.leftBytes() - applicationProfilesLength;
+        while (nstream.leftBytes() > profilesEnd) {
             ApplicationProfile applicationProfile;
             if (!applicationProfile.unpack(nstream)) {
                 return false;

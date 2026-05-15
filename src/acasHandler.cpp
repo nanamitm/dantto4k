@@ -50,6 +50,10 @@ bool AcasHandler::decrypt(MmtTlv::Mmtp& mmtp) {
     memcpy(iv.data(), &packetIdBe, 2);
     memcpy(iv.data() + 2, &packetSequenceNumberBe, 4);
 
+    if (mmtp.payload.size() < 8) {
+        return false;
+    }
+
     if (hasAESNI) { [[likely]]
         if (lastKey != *key) { [[unlikely]]
             aes.setKey(*key);
@@ -135,9 +139,9 @@ void AcasHandler::worker() {
         }
 
         AcasCard::DecryptionKey key = {};
-        acasCard->ecm(current.second, key);
+        const bool ecmOk = acasCard->ecm(current.second, key);
 
-        if (generation.load(std::memory_order_relaxed) == current.first) {
+        if (ecmOk && generation.load(std::memory_order_relaxed) == current.first) {
             std::lock_guard<std::mutex> lock(keyMutex);
             this->key = key;
         }

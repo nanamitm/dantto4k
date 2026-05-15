@@ -35,6 +35,7 @@
 #include "adtsConverter.h"
 #include "mmtTlvDemuxer.h"
 #include "timebase.h"
+#include "timeUtil.h"
 #include "config.h"
 #include "ntp.h"
 #include "b24SubtitleConvertor.h"
@@ -134,6 +135,7 @@ void RemuxerHandler::onAudioData(const MmtTlv::MmtStream& mmtStream, const MmtTl
     ADTSConverter converter;
     std::vector<uint8_t> output;
     if (!converter.convert(mfuData.data.data(), mfuData.data.size(), output)) {
+        adtsDropCount++;
         return;
     }
 
@@ -182,6 +184,9 @@ void RemuxerHandler::setOutputCallback(OutputCallback cb) {
 
 void RemuxerHandler::writeStream(const MmtTlv::MmtStream& mmtStream, const MmtTlv::MfuData& mfuData, const std::vector<uint8_t>& streamData) {
     const auto pid = mmtStream.getMpeg2PacketId();
+    if (pid > 0x1FFE) {
+        return;
+    }
     auto& pendingData = mapPesPendingData[pid];
     auto& cc = mapCC[pid];
     auto& packetIndex = mapPesPacketIndex[pid];
@@ -307,6 +312,9 @@ void RemuxerHandler::writeSubtitle(const MmtTlv::MmtStream& mmtStream, const B24
     pes.pack(pesOutput);
 
     const auto pid = mmtStream.getMpeg2PacketId();
+    if (pid > 0x1FFE) {
+        return;
+    }
     auto& cc = mapCC[pid];
 
     size_t payloadLength = pesOutput.size();
@@ -398,6 +406,9 @@ void RemuxerHandler::writeCaptionManagementData(uint64_t pts) {
         pes.pack(pesOutput);
 
         const auto pid = stream.second.getMpeg2PacketId();
+        if (pid > 0x1FFE) {
+            continue;
+        }
         auto& cc = mapCC[pid];
 
         size_t payloadLength = pesOutput.size();
@@ -427,7 +438,7 @@ void RemuxerHandler::writeCaptionManagementData(uint64_t pts) {
 }
 
 void RemuxerHandler::onMhBit(const MmtTlv::MhBit& mhBit) {
-    ts::BIT tsBit(mhBit.versionNumber, mhBit.currentNextIndicator);
+    ts::BIT tsBit(mhBit.versionNumber % 32, mhBit.currentNextIndicator);
     tsBit.original_network_id = mhBit.originalNetworkId;
 
     for (const auto& descriptor : mhBit.descriptors.list) {
@@ -440,13 +451,11 @@ void RemuxerHandler::onMhBit(const MmtTlv::MhBit& mhBit) {
 
             struct tm tm;
             EITDecodeMjd(mmtDescriptor->updateTime, &tm.tm_year, &tm.tm_mon, &tm.tm_mday);
+            if (!isValidMjdDate(tm.tm_year, tm.tm_mon, tm.tm_mday)) {
+                break;
+            }
 
-            try {
-                tsDescriptor.update_time = ts::Time(tm.tm_year, tm.tm_mon, tm.tm_mday, 0, 0);
-            }
-            catch (const ts::Time::TimeError&) {
-                return;
-            }
+            tsDescriptor.update_time = ts::Time(tm.tm_year, tm.tm_mon, tm.tm_mday, 0, 0);
 
             for (const auto& entry : mmtDescriptor->entries) {
                 ts::SIParameterDescriptor::Entry tsEntry;
@@ -497,13 +506,11 @@ void RemuxerHandler::onMhBit(const MmtTlv::MhBit& mhBit) {
 
                 struct tm tm;
                 EITDecodeMjd(mmtDescriptor->updateTime, &tm.tm_year, &tm.tm_mon, &tm.tm_mday);
+                if (!isValidMjdDate(tm.tm_year, tm.tm_mon, tm.tm_mday)) {
+                    break;
+                }
 
-                try {
-                    tsDescriptor.update_time = ts::Time(tm.tm_year, tm.tm_mon, tm.tm_mday, 0, 0);
-                }
-                catch (const ts::Time::TimeError&) {
-                    return;
-                }
+                tsDescriptor.update_time = ts::Time(tm.tm_year, tm.tm_mon, tm.tm_mday, 0, 0);
 
                 for (const auto& entry : mmtDescriptor->entries) {
                     ts::SIParameterDescriptor::Entry tsEntry;
@@ -558,18 +565,16 @@ void RemuxerHandler::onMhEit(const MmtTlv::MhEit& mhEit) {
         programStartTime = static_cast<uint64_t>(std::mktime(&startTime));
     }
 
-    ts::EIT tsEit(true, mhEit.isPf(), 0, mhEit.versionNumber, true, mhEit.serviceId, mhEit.tlvStreamId, mhEit.originalNetworkId);
+    ts::EIT tsEit(true, mhEit.isPf(), 0, mhEit.versionNumber % 32, true, mhEit.serviceId, mhEit.tlvStreamId, mhEit.originalNetworkId);
     for (const auto& mhEvent : mhEit.events) {
         ts::EIT::Event tsEvent(&tsEit);
 
         tm startTime = EITConvertStartTime(mhEvent->startTime);
-        try {
-            tsEvent.start_time = ts::Time(startTime.tm_year + 1900, startTime.tm_mon + 1, startTime.tm_mday,
-                startTime.tm_hour, startTime.tm_min, startTime.tm_sec);
-        }
-        catch (const ts::Time::TimeError&) {
+        if (!isValidEITStartTime(startTime)) {
             continue;
         }
+        tsEvent.start_time = ts::Time(startTime.tm_year + 1900, startTime.tm_mon + 1, startTime.tm_mday,
+            startTime.tm_hour, startTime.tm_min, startTime.tm_sec);
 
         tsEvent.duration = std::chrono::seconds(EITConvertDuration(mhEvent->duration));
         tsEvent.running_status = convertRunningStatus(mhEvent->runningStatus);
@@ -675,7 +680,12 @@ void RemuxerHandler::onMhEit(const MmtTlv::MhEit& mhEit) {
 
     // EITs table ID range in MMT/TLV:   0x8C ~ 0x9B
     // EITs table ID range in MPEG-2 TS: 0x50 ~ 0x5F
-    tsEit.last_table_id = mhEit.lastTableId - 0x8C + 0x50;
+    if (!mhEit.isPf()) {
+        if (mhEit.lastTableId < 0x8C || mhEit.lastTableId > 0x9B) {
+            return;
+        }
+        tsEit.last_table_id = mhEit.lastTableId - 0x8C + 0x50;
+    }
 
     ts::BinaryTable table;
     tsEit.serialize(duck, table);
@@ -714,7 +724,7 @@ void RemuxerHandler::onMhSdtActual(const MmtTlv::MhSdt& mhSdt) {
 
     tsid = mhSdt.tlvStreamId;
 
-    ts::SDT tsSdt(true, mhSdt.versionNumber, mhSdt.currentNextIndicator, mhSdt.tlvStreamId, mhSdt.originalNetworkId);
+    ts::SDT tsSdt(true, mhSdt.versionNumber % 32, mhSdt.currentNextIndicator, mhSdt.tlvStreamId, mhSdt.originalNetworkId);
     for (const auto& service : mhSdt.services) {
         ts::SDT::ServiceEntry tsService(&tsSdt);
         tsService.EITs_present = service->eitScheduleFlag;
@@ -788,11 +798,15 @@ void RemuxerHandler::onPlt(const MmtTlv::Plt& plt) {
         }
 
         if (item.locationInfos.locationType != 0) {
-            return;
+            continue;
         }
 
-        pat.pmts[serviceId] = 0x1000 + i;
-        mapService2Pid[serviceId] = 0x1000 + i;
+        const uint16_t pmtPid = static_cast<uint16_t>(0x1000 + i);
+        if (pmtPid > 0x1FFE) {
+            break;
+        }
+        pat.pmts[serviceId] = pmtPid;
+        mapService2Pid[serviceId] = pmtPid;
         i++;
     }
 
@@ -849,6 +863,11 @@ void RemuxerHandler::onMpt(const MmtTlv::Mpt& mpt) {
                 }
 
                 if (mmtStream->getComponentTag() == -1) {
+                    streamIndex++;
+                    continue;
+                }
+
+                if (mmtStream->getMpeg2PacketId() > 0x1FFE) {
                     streamIndex++;
                     continue;
                 }
@@ -949,7 +968,10 @@ void RemuxerHandler::onMpt(const MmtTlv::Mpt& mpt) {
 
 void RemuxerHandler::onMhTot(const MmtTlv::MhTot& mhTot) {
     struct tm startTime = EITConvertStartTime(mhTot.jstTime);
-    ts::Time time = ts::Time(startTime.tm_year + 1900, startTime.tm_mon + 1, startTime.tm_mday,
+    if (!isValidEITStartTime(startTime)) {
+        return;
+    }
+    ts::Time time(startTime.tm_year + 1900, startTime.tm_mon + 1, startTime.tm_mday,
         startTime.tm_hour, startTime.tm_min, startTime.tm_sec);
     ts::TOT tot(time);
 
@@ -978,7 +1000,7 @@ void RemuxerHandler::onMhTot(const MmtTlv::MhTot& mhTot) {
 }
 
 void RemuxerHandler::onMhCdt(const MmtTlv::MhCdt& mhCdt) {
-    ts::CDT cdt(mhCdt.versionNumber, mhCdt.currentNextIndicator);
+    ts::CDT cdt(mhCdt.versionNumber % 32, mhCdt.currentNextIndicator);
     cdt.original_network_id = mhCdt.originalNetworkId;
     cdt.download_data_id = mhCdt.downloadDataId;
     cdt.data_type = mhCdt.dataType;
@@ -1011,7 +1033,7 @@ void RemuxerHandler::onMhCdt(const MmtTlv::MhCdt& mhCdt) {
 }
 
 void RemuxerHandler::onNit(const MmtTlv::Nit& nit) {
-    ts::NIT tsNit(true, nit.versionNumber, nit.currentNextIndicator, nit.networkId);
+    ts::NIT tsNit(true, nit.versionNumber % 32, nit.currentNextIndicator, nit.networkId);
 
     for (const auto& descriptor : nit.descriptors.list) {
         switch (descriptor->getDescriptorTag()) {
