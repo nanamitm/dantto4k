@@ -13,8 +13,8 @@ private:
 	int sliceSegmentCount{0};
 	size_t nalUnitSize{0};
 	int nalUnitType{0};
-	uint64_t pts{0};
-	uint64_t dts{0};
+	uint64_t pts{NOPTS_VALUE};
+	uint64_t dts{NOPTS_VALUE};
 
 };
 

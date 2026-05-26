@@ -30,10 +30,82 @@
 #include "caMessage.h"
 #include "damt.h"
 #include <algorithm>
+#include <ostream>
 #include "ddmt.h"
 #include "dcct.h"
 
 namespace MmtTlv {
+
+namespace {
+
+// Re-serialize a CompressedIPPacket header back to bytes.
+std::vector<uint8_t> serializeCompressedIP(const CompressedIPPacket& cip)
+{
+    Common::WriteStream s;
+    uint16_t word = static_cast<uint16_t>((cip.contextId << 4) | (cip.sequenceNumber & 0x0F));
+    s.putBe16U(word);
+    s.put8U(static_cast<uint8_t>(cip.headerType));
+    if (cip.headerType == ContextHeaderType::ContextIdPartialIpv6AndPartialUdp) {
+        s.write(std::span<const uint8_t>(cip.ipv6.data(), cip.ipv6.size()));
+        s.write(std::span<const uint8_t>(cip.udp.data(),  cip.udp.size()));
+    }
+    return s.getData();
+}
+
+// Re-serialize an MMTP packet back to bytes.
+// The scrambling flag in the extension header is cleared (encryption flag → UNSCRAMBLED).
+std::vector<uint8_t> serializeMmtp(const Mmtp& mmtp)
+{
+    Common::WriteStream s;
+
+    uint8_t b0 = static_cast<uint8_t>(
+        (mmtp.version          << 6) |
+        (mmtp.packetCounterFlag << 5) |
+        (mmtp.fecType          << 3) |
+        (mmtp.reserved1        << 2) |
+        (mmtp.extensionHeaderFlag << 1) |
+         mmtp.rapFlag);
+    s.put8U(b0);
+
+    uint8_t b1 = static_cast<uint8_t>((mmtp.reserved2 << 6) | static_cast<uint8_t>(mmtp.payloadType));
+    s.put8U(b1);
+
+    s.putBe16U(mmtp.packetId);
+    s.putBe32U(mmtp.deliveryTimestamp);
+    s.putBe32U(mmtp.packetSequenceNumber);
+
+    if (mmtp.packetCounterFlag)
+        s.putBe32U(mmtp.packetCounter);
+
+    if (mmtp.extensionHeaderFlag) {
+        s.putBe16U(mmtp.extensionHeaderType);
+        s.putBe16U(mmtp.extensionHeaderLength);
+
+        auto extHdr = mmtp.extensionHeaderField;
+        // Clear encryptionFlag (bits 4:3) at byte offset 4 inside the extension header field.
+        // Layout: [2B sub-type][2B reserved][1B flags including encryptionFlag at bits 4:3]...
+        if (extHdr.size() >= 5)
+            extHdr[4] &= ~0x18u;  // 0b00011000 = encryption flag mask
+        s.write(std::span<const uint8_t>(extHdr.data(), extHdr.size()));
+    }
+
+    s.write(std::span<const uint8_t>(mmtp.payload.data(), mmtp.payload.size()));
+    return s.getData();
+}
+
+// Write a complete TLV packet to stream: [0x7F][type][len_hi][len_lo][payload]
+void writeTlvPacket(std::ostream& out, uint8_t packetType, const std::vector<uint8_t>& payload)
+{
+    uint16_t len = static_cast<uint16_t>(payload.size());
+    uint8_t hdr[4] = { 0x7F, packetType,
+                       static_cast<uint8_t>(len >> 8),
+                       static_cast<uint8_t>(len & 0xFF) };
+    out.write(reinterpret_cast<const char*>(hdr), 4);
+    if (!payload.empty())
+        out.write(reinterpret_cast<const char*>(payload.data()), payload.size());
+}
+
+} // anonymous namespace
 
 void MmtTlvDemuxer::setDemuxerHandler(DemuxerHandler& demuxerHandler) {
     this->demuxerHandler = &demuxerHandler;
@@ -154,6 +226,17 @@ DemuxStatus MmtTlvDemuxer::demux(Common::ReadStream& stream) {
             }
         }
 
+        // Write decoded TLV packet to dump stream (scrambling flag cleared, payload decrypted).
+        if (decodedDumpStream) {
+            auto cipBytes  = serializeCompressedIP(compressedIPPacket);
+            auto mmtpBytes = serializeMmtp(mmtp);
+            std::vector<uint8_t> payload;
+            payload.reserve(cipBytes.size() + mmtpBytes.size());
+            payload.insert(payload.end(), cipBytes.begin(),  cipBytes.end());
+            payload.insert(payload.end(), mmtpBytes.begin(), mmtpBytes.end());
+            writeTlvPacket(*decodedDumpStream, static_cast<uint8_t>(TlvPacketType::HeaderCompressedIpPacket), payload);
+        }
+
         Common::ReadStream mmtpPayloadStream(mmtp.payload);
         switch (mmtp.payloadType) {
         case PayloadType::Mpu:
@@ -170,12 +253,22 @@ DemuxStatus MmtTlvDemuxer::demux(Common::ReadStream& stream) {
     case TlvPacketType::TransmissionControlSignalPacket:
     {
         statistics.tlvTransmissionControlSignalPacketCount++;
+        // Pass through as-is to decoded dump.
+        if (decodedDumpStream)
+            writeTlvPacket(*decodedDumpStream,
+                static_cast<uint8_t>(TlvPacketType::TransmissionControlSignalPacket),
+                tlv.getData());
         processTlvTable(tlvDataStream);
         break;
     }
     case TlvPacketType::NullPacket:
     {
         statistics.tlvNullPacketCount++;
+        // Pass through as-is to decoded dump.
+        if (decodedDumpStream)
+            writeTlvPacket(*decodedDumpStream,
+                static_cast<uint8_t>(TlvPacketType::NullPacket),
+                tlv.getData());
         break;
     }
     default:
@@ -657,6 +750,22 @@ void MmtTlvDemuxer::clear() {
 
     if (casHandler) {
         casHandler->clear();
+    }
+}
+
+void MmtTlvDemuxer::resetStreams() {
+    mapAssembler.clear();
+    mapFragmentValidator.clear();
+    mfuData.clear();
+    // Keep mapStream and mapPacketIdByIdx so stream registration survives the seek.
+    // Reset per-stream sequence state so the demuxer accepts any starting sequence number.
+    for (auto& [id, stream] : mapStream) {
+        stream.lastMpuSequenceNumber.reset();
+        stream.auIndex = 0;
+        stream.mpuTimestamps.clear();
+        stream.mpuExtendedTimestamps.clear();
+        if (stream.mpuProcessor)
+            stream.mpuProcessor->clear();
     }
 }
 

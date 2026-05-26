@@ -49,6 +49,9 @@ Config loadConfig(const std::string& filename) {
                  if (key == "mmtsDumpPath") {
                      config.mmtsDumpPath = value;
                  }
+                 if (key == "decode") {
+                     config.decodeDump = (value == "true");
+                 }
              }
          }
          if (currentSection == "acas") {

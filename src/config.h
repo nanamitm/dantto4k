@@ -10,6 +10,7 @@ public:
     std::string casProxyServer{};
     std::string customWinscardDLL{};
     bool disableADTSConversion{false};
+    bool decodeDump{false};  // true: mmtsDumpPath outputs ACAS-decrypted MMT/TLV
 };
 
 Config loadConfig(const std::string& filename);

@@ -46,8 +46,17 @@ class MmtTlvDemuxer {
 public:
 	void setDemuxerHandler(DemuxerHandler& demuxerHandler);
 	void setCasHandler(std::unique_ptr<CasHandler> handler);
+
+	// When set, each decoded (ACAS-decrypted) TLV packet is written to this stream.
+	// Non-scrambled packets are passed through as-is.
+	// Caller owns the stream lifetime.
+	void setDecodedDumpStream(std::ostream* stream) { decodedDumpStream = stream; }
+
 	DemuxStatus demux(Common::ReadStream& stream);
 	void clear();
+	// Reset per-stream processing state (assemblers, validators, sequence tracking)
+	// without discarding stream registration (mapStream). Used when seeking mid-stream.
+	void resetStreams();
 	void printStatistics() const;
 
 private:
@@ -90,6 +99,7 @@ private:
 	std::unique_ptr<CasHandler> casHandler;
 	DemuxerHandler* demuxerHandler = nullptr;
 	MmtTlvStatistics statistics;
+	std::ostream* decodedDumpStream = nullptr;
 
 };
 }
