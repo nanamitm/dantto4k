@@ -82,6 +82,45 @@ extern "C" __declspec(dllexport) IBonDriver* CreateBonDriver() {
     return &g_bonDriverContext.bonTuner;
 }
 
+
+extern "C" __declspec(dllexport) BOOL WINAPI StartMmtsSave(const wchar_t* path, BOOL overwrite) {
+    if (path == nullptr || path[0] == L'\0') {
+        return FALSE;
+    }
+
+    if (!overwrite) {
+        DWORD attr = GetFileAttributesW(path);
+        if (attr != INVALID_FILE_ATTRIBUTES) {
+            return FALSE;
+        }
+    }
+
+    g_bonDriverContext.demuxer.setDecodedDumpStream(nullptr);
+    if (g_bonDriverContext.mmtsDumpFs) {
+        g_bonDriverContext.mmtsDumpFs->close();
+        g_bonDriverContext.mmtsDumpFs.reset();
+    }
+
+    g_bonDriverContext.mmtsDumpFs = std::make_unique<std::ofstream>(path, std::ios::binary);
+    if (!g_bonDriverContext.mmtsDumpFs->is_open()) {
+        g_bonDriverContext.mmtsDumpFs.reset();
+        return FALSE;
+    }
+
+    if (config.decodeDump) {
+        g_bonDriverContext.demuxer.setDecodedDumpStream(g_bonDriverContext.mmtsDumpFs.get());
+    }
+    return TRUE;
+}
+
+extern "C" __declspec(dllexport) void WINAPI StopMmtsSave() {
+    g_bonDriverContext.demuxer.setDecodedDumpStream(nullptr);
+    if (g_bonDriverContext.mmtsDumpFs) {
+        g_bonDriverContext.mmtsDumpFs->close();
+        g_bonDriverContext.mmtsDumpFs.reset();
+    }
+}
+
 BOOL APIENTRY DllMain(HINSTANCE hModule, DWORD fdwReason, LPVOID lpReserved) {
     switch (fdwReason) {
     case DLL_PROCESS_ATTACH:
