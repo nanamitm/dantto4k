@@ -29,6 +29,9 @@ struct MfuData {
 	bool keyframe{false};
 	bool isFirstFragment{false};
 	bool isLastFragment{false};
+	uint8_t subtitleDataType{0};
+	uint16_t subtitleSubsampleNumber{0};
+	uint16_t subtitleLastSubsampleNumber{0};
 };
 
 class MmtStream;

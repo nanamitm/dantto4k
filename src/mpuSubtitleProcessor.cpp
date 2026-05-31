@@ -14,10 +14,6 @@ std::optional<MfuData> MpuSubtitleProcessor::process(MmtStream& mmtStream, const
     uint8_t lengthExtFlag = (uint8 >> 3) & 1;
     uint8_t subsampleInfoListFlag = (uint8 >> 2) & 1;
 
-    if (dataType != 0) {
-        return std::nullopt;
-    }
-
     uint32_t dataSize;
     if (lengthExtFlag)
         dataSize = stream.getBe32U();
@@ -46,6 +42,9 @@ std::optional<MfuData> MpuSubtitleProcessor::process(MmtStream& mmtStream, const
     stream.read(mfuData.data.data(), dataSize);
 
     mfuData.streamIndex = mmtStream.getStreamIndex();
+    mfuData.subtitleDataType = dataType;
+    mfuData.subtitleSubsampleNumber = subsampleNumber;
+    mfuData.subtitleLastSubsampleNumber = lastSubsampleNumber;
 
     return mfuData;
 }
