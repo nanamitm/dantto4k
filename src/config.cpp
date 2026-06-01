@@ -84,6 +84,20 @@ Config loadConfig(const std::string& filename) {
                  }
              }
          }
+         if (currentSection == "subtitle") {
+             size_t equalPos = line.find('=');
+             if (equalPos != std::string::npos) {
+                 std::string key = trim(line.substr(0, equalPos));
+                 std::string value = trim(line.substr(equalPos + 1));
+
+                 if (key == "debugLogPath") {
+                     config.subtitleDebugLogPath = value;
+                 }
+                 if (key == "aribBracketSquish") {
+                     config.aribBracketSquish = (value == "true");
+                 }
+             }
+         }
      }
 
      file.close();
