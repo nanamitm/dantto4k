@@ -1,4 +1,4 @@
-﻿#include "remuxerHandler.h"
+#include "remuxerHandler.h"
 #include "accessControlDescriptor.h"
 #include "contentCopyControlDescriptor.h"
 #include "mhAudioComponentDescriptor.h"
@@ -39,8 +39,24 @@
 #include "config.h"
 #include "ntp.h"
 #include "b24SubtitleConvertor.h"
+#include <fstream>
+#include <mutex>
 
 namespace {
+
+std::mutex g_subtitleDebugLogMutex;
+
+void subtitleDebugLog(const std::string& line) {
+    if (config.subtitleDebugLogPath.empty()) {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(g_subtitleDebugLogMutex);
+    std::ofstream stream(config.subtitleDebugLogPath, std::ios::app | std::ios::binary);
+    if (stream) {
+        stream << line << "\n";
+    }
+}
 
 int convertRunningStatus(int runningStatus) {
     switch (runningStatus) {
@@ -144,9 +160,54 @@ void RemuxerHandler::onAudioData(const MmtTlv::MmtStream& mmtStream, const MmtTl
 
 void RemuxerHandler::onSubtitleData(const MmtTlv::MmtStream& mmtStream, const struct MmtTlv::MfuData& mfuData) {
     std::string ttml(mfuData.data.begin(), mfuData.data.end());
-    std::list<B24SubtitleOutput> output;
-    B24SubtitleConvertor::convert(ttml, output);
+    const uint32_t streamIndex = mmtStream.getStreamIndex();
+    subtitleDebugLog("subtitle mfu stream=" + std::to_string(streamIndex) +
+        " type=" + std::to_string(mfuData.subtitleDataType) +
+        " sub=" + std::to_string(mfuData.subtitleSubsampleNumber) +
+        "/" + std::to_string(mfuData.subtitleLastSubsampleNumber) +
+        " size=" + std::to_string(mfuData.data.size()));
 
+    if (mfuData.subtitleDataType != 0) {
+        auto glyphs = B24SubtitleConvertor::parseSvgGlyphResource(ttml);
+        subtitleDebugLog("subtitle resource stream=" + std::to_string(streamIndex) +
+            " glyphs=" + std::to_string(glyphs.size()));
+        if (!glyphs.empty()) {
+            auto& streamGlyphs = mapSubtitleDrcsGlyphs[streamIndex];
+            streamGlyphs.insert(glyphs.begin(), glyphs.end());
+
+            auto pending = std::move(mapPendingSubtitleTtml[streamIndex]);
+            mapPendingSubtitleTtml.erase(streamIndex);
+            for (const auto& pendingTtml : pending) {
+                if (B24SubtitleConvertor::hasMissingDrcsGlyph(pendingTtml, streamGlyphs)) {
+                    subtitleDebugLog("subtitle pending keep stream=" + std::to_string(streamIndex));
+                    mapPendingSubtitleTtml[streamIndex].push_back(pendingTtml);
+                }
+                else {
+                    subtitleDebugLog("subtitle pending flush stream=" + std::to_string(streamIndex));
+                    convertAndWriteSubtitle(mmtStream, pendingTtml);
+                }
+            }
+        }
+        return;
+    }
+
+    auto& streamGlyphs = mapSubtitleDrcsGlyphs[streamIndex];
+    if (B24SubtitleConvertor::containsDrcsCodepoint(ttml) &&
+        B24SubtitleConvertor::hasMissingDrcsGlyph(ttml, streamGlyphs)) {
+        subtitleDebugLog("subtitle pending add stream=" + std::to_string(streamIndex));
+        mapPendingSubtitleTtml[streamIndex].push_back(std::move(ttml));
+        return;
+    }
+
+    subtitleDebugLog("subtitle convert now stream=" + std::to_string(streamIndex));
+    convertAndWriteSubtitle(mmtStream, ttml);
+}
+
+void RemuxerHandler::convertAndWriteSubtitle(const MmtTlv::MmtStream& mmtStream, const std::string& ttml) {
+    std::list<B24SubtitleOutput> output;
+    B24SubtitleConvertor::convert(ttml, mapSubtitleDrcsGlyphs[mmtStream.getStreamIndex()], output);
+    subtitleDebugLog("subtitle converted stream=" + std::to_string(mmtStream.getStreamIndex()) +
+        " pes=" + std::to_string(output.size()));
     if (output.empty()) {
         return;
     }
@@ -1116,6 +1177,8 @@ void RemuxerHandler::clear() {
     mapPesPendingData.clear();
     mapPesPacketIndex.clear();
     mapPesState.clear();
+    mapSubtitleDrcsGlyphs.clear();
+    mapPendingSubtitleTtml.clear();
     tsid = -1;
     lastPcr = 0;
     lastCaptionManagementDataPts = 0;

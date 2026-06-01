@@ -7,6 +7,7 @@
 #include <variant>
 #include <optional>
 #include <sstream>
+#include <unordered_map>
 #include "ttml.h"
 
 namespace B24 {
@@ -313,8 +314,20 @@ public:
     std::optional<uint64_t> begin;
 };
 
+struct B24DrcsGlyph {
+    uint32_t codepoint{};
+    int unitsPerEm{1024};
+    int ascent{880};
+    int descent{-120};
+    std::string path;
+};
+
 class B24SubtitleConvertor {
 public:
     static bool convert(const std::string& input, std::list<B24SubtitleOutput>& output);
+    static bool convert(const std::string& input, const std::unordered_map<uint32_t, B24DrcsGlyph>& drcsGlyphs, std::list<B24SubtitleOutput>& output);
+    static std::unordered_map<uint32_t, B24DrcsGlyph> parseSvgGlyphResource(const std::string& input);
+    static bool containsDrcsCodepoint(const std::string& input);
+    static bool hasMissingDrcsGlyph(const std::string& input, const std::unordered_map<uint32_t, B24DrcsGlyph>& drcsGlyphs);
 
 };

@@ -93,9 +93,6 @@ Config loadConfig(const std::string& filename) {
                  if (key == "debugLogPath") {
                      config.subtitleDebugLogPath = value;
                  }
-                 if (key == "aribBracketSquish") {
-                     config.aribBracketSquish = (value == "true");
-                 }
              }
          }
      }

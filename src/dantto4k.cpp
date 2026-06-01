@@ -11,6 +11,10 @@
 #include "bufferedOutput.h"
 #include "progressReporter.h"
 
+#ifdef WIN32
+#include <Windows.h>
+#endif
+
 namespace {
 
 struct Args {
@@ -119,6 +123,39 @@ Args parseArguments(int argc, char* argv[]) {
     return args;
 }
 
+#ifdef WIN32
+std::string getExeConfigPath() {
+    char modulePath[MAX_PATH];
+    DWORD length = GetModuleFileNameA(nullptr, modulePath, static_cast<DWORD>(sizeof(modulePath)));
+    if (length == 0 || length >= sizeof(modulePath)) {
+        return "";
+    }
+
+    std::string path(modulePath, length);
+    size_t dotPos = path.find_last_of('.');
+    size_t separatorPos = path.find_last_of("\\/");
+    if (dotPos == std::string::npos || (separatorPos != std::string::npos && dotPos < separatorPos)) {
+        return path + ".ini";
+    }
+    return path.substr(0, dotPos) + ".ini";
+}
+
+void loadExeConfigIfExists() {
+    std::string configPath = getExeConfigPath();
+    if (configPath.empty()) {
+        return;
+    }
+
+    std::ifstream file(configPath);
+    if (!file.is_open()) {
+        return;
+    }
+    file.close();
+
+    config = loadConfig(configPath);
+}
+#endif
+
 void printReaderList(const Args& args) {
     try {
         std::unique_ptr<ISmartCard> smartCard;
@@ -148,9 +185,30 @@ int main(int argc, char* argv[]) {
 
     Args args = parseArguments(argc, argv);
 #ifdef WIN32
-    config.customWinscardDLL = args.customWinscardDLL;
+    try {
+        loadExeConfigIfExists();
+    }
+    catch (const std::runtime_error& e) {
+        std::cerr << e.what() << std::endl;
+        return 1;
+    }
+
+    if (!args.customWinscardDLL.empty()) {
+        config.customWinscardDLL = args.customWinscardDLL;
+    }
 #endif
-    config.disableADTSConversion = args.disableADTSConversion;
+    if (args.casProxyHost.empty() && !config.casProxyServer.empty()) {
+        auto parsed = casproxy::parseAddress(config.casProxyServer);
+        if (!parsed) {
+            std::cerr << "Invalid CasProxyServer address" << std::endl;
+            return 1;
+        }
+        args.casProxyHost = parsed->first;
+        args.casProxyPort = parsed->second;
+    }
+    if (args.disableADTSConversion) {
+        config.disableADTSConversion = true;
+    }
 
     bool useStdin = (args.input == "-");
     bool useStdout = (args.output == "-");
@@ -228,7 +286,7 @@ int main(int argc, char* argv[]) {
             smartCard = std::make_unique<RemoteSmartCard>(args.casProxyHost, args.casProxyPort);
         }
         
-        smartCard->setSmartCardReaderName(args.smartCardReaderName);
+        smartCard->setSmartCardReaderName(args.smartCardReaderName.empty() ? config.smartCardReaderName : args.smartCardReaderName);
         acasHandler->setSmartCard(std::move(smartCard));
         demuxer.setCasHandler(std::move(acasHandler));
     }

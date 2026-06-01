@@ -88,6 +88,7 @@ private:
 	void writeStream(const MmtTlv::MmtStream& mmtStream, const MmtTlv::MfuData& mfuData, const std::vector<uint8_t>& data);
 	void writeSubtitle(const MmtTlv::MmtStream& mmtStream, const B24SubtitleOutput& subtitle);
 	void writeCaptionManagementData(uint64_t pts);
+	void convertAndWriteSubtitle(const MmtTlv::MmtStream& mmtStream, const std::string& ttml);
 	MmtTlv::MmtTlvDemuxer& demuxer;
 	OutputCallback outputCallback;
 	std::unordered_map<uint16_t, uint16_t> mapService2Pid;
@@ -95,6 +96,8 @@ private:
 	std::unordered_map<uint16_t, std::vector<uint8_t>> mapPesPendingData;
 	std::unordered_map<uint16_t, uint32_t> mapPesPacketIndex;
 	std::unordered_map<uint16_t, PesState> mapPesState;
+	std::unordered_map<uint32_t, std::unordered_map<uint32_t, B24DrcsGlyph>> mapSubtitleDrcsGlyphs;
+	std::unordered_map<uint32_t, std::vector<std::string>> mapPendingSubtitleTtml;
 	uint64_t adtsDropCount{0};
 	int tsid{-1};
 	uint64_t lastPcr{};

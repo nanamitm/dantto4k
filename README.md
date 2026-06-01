@@ -4,6 +4,7 @@
 
 ### dantto4k.exe
 MMTSから復号化およびMPEG-2 TSへの変換を行います。
+dantto4k.exeと同じフォルダにdantto4k.iniがある場合、その設定を読み込みます。
 ```
 Usage:
   dantto4k [OPTION...] input output ('-' for stdin/stdout)

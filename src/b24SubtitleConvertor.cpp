@@ -446,24 +446,6 @@ std::vector<uint8_t> buildDrcsDataUnit(const std::map<uint32_t, uint8_t>& codeBy
     return count == 0 ? std::vector<uint8_t>{} : data;
 }
 
-// Returns true if the UTF-8 string contains any full-width bracket that
-// broadcasters incorrectly transmit as MSZ (72x144). These characters must
-// be rendered at NSZ (full-width) to avoid overlapping adjacent glyphs.
-bool containsFullwidthBracketMistagged(const std::string& text) {
-    size_t pos = 0;
-    while (pos < text.size()) {
-        auto cp = readUtf8Codepoint(text, pos);
-        if (!cp) break;
-        switch (*cp) {
-        case U'『': case U'』':
-        case U'「': case U'」':
-        case U'【': case U'】':
-            return true;
-        }
-    }
-    return false;
-}
-
 void appendCaptionTextStateReset(std::vector<uint8_t>& output) {
     // aribEncode() starts from the caption default graphic sets for every call.
     // The actual ARIB stream state is continuous, so reset it before appending
@@ -623,17 +605,9 @@ bool B24SubtitleConvertor::convert(const std::string& input, const std::unordere
                         }
                     }
                     else if (first.value == 72 && second.value == 144) {
-                        if (!config.aribBracketSquish && containsFullwidthBracketMistagged(span.text)) {
-                            if (characterSize != B24ControlSet::NSZ) {
-                                unitDataByte.push_back(B24ControlSet::NSZ);
-                                characterSize = B24ControlSet::NSZ;
-                            }
-                        }
-                        else {
-                            if (characterSize != B24ControlSet::MSZ) {
-                                unitDataByte.push_back(B24ControlSet::MSZ);
-                                characterSize = B24ControlSet::MSZ;
-                            }
+                        if (characterSize != B24ControlSet::MSZ) {
+                            unitDataByte.push_back(B24ControlSet::MSZ);
+                            characterSize = B24ControlSet::MSZ;
                         }
                     }
                     else if (first.value == 72 && second.value == 72) {
