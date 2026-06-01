@@ -65,6 +65,8 @@ jobs:
 
           Copy-Item msvc\x64\Release\dantto4k.exe $stage
           Copy-Item msvc\x64\Release\BonDriver_dantto4k.dll $stage
+          Copy-Item "$env:TSDUCK\bin\tsduck.dll" $stage
+          Copy-Item "$env:TSDUCK\bin\tscore.dll" $stage
           Copy-Item ini\* $stage -Recurse
           Copy-Item README.md, LICENSE $stage
 
