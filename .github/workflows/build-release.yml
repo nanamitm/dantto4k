@@ -24,6 +24,15 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
+      - name: Generate tsduck headers
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $binInclude = "thirdparty\tsduck\bin\include"
+          New-Item -ItemType Directory -Force $binInclude | Out-Null
+          python "thirdparty\tsduck\scripts\build-tsduck-header.py" tscore "$binInclude\tscore.h"
+          python "thirdparty\tsduck\scripts\build-tsduck-header.py" tsduck "$binInclude\tsduck.h"
+
       - name: Build
         run: msbuild msvc\dantto4k.sln /m /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143
 
