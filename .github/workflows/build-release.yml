@@ -24,32 +24,53 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      - name: Install TSDuck
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Build TSDuck
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $release = Invoke-RestMethod -Uri 'https://api.github.com/repos/tsduck/tsduck/releases/latest'
-          $asset = $release.assets |
-            Where-Object { $_.name -match '^TSDuck-Win64-.*\.exe$' } |
-            Select-Object -First 1
-          if (-not $asset) {
-            throw 'TSDuck Win64 installer was not found in the latest release.'
+
+          $tsduckSource = Join-Path $PWD 'thirdparty\tsduck'
+          $env:DisableSpecificWarnings = '4819'
+          & "$tsduckSource\scripts\build.ps1" -Release -Win64 -NoStatic -NoLowPriority -NoPause
+
+          $tsduckBuild = Join-Path $tsduckSource 'bin\Release-x64'
+          $tsduckStage = Join-Path $env:RUNNER_TEMP 'tsduck'
+          $tsduckLib = Join-Path $tsduckStage 'lib\Release-Win64'
+          $tsduckBin = Join-Path $tsduckStage 'bin'
+          $includeRoot = Join-Path $tsduckStage 'include'
+
+          New-Item -ItemType Directory -Path $tsduckLib, $tsduckBin, $includeRoot | Out-Null
+          Copy-Item "$tsduckSource\pkg\nsis\tscore.props" $tsduckStage
+          Copy-Item "$tsduckSource\pkg\nsis\tsduck.props" $tsduckStage
+          Copy-Item "$tsduckBuild\tscore.dll", "$tsduckBuild\tscore.lib", "$tsduckBuild\tsduck.dll", "$tsduckBuild\tsduck.lib" $tsduckLib
+          Copy-Item "$tsduckBuild\tscore.dll", "$tsduckBuild\tsduck.dll" $tsduckBin
+
+          function Copy-Headers([string]$Name) {
+            $outDir = Join-Path $includeRoot $Name
+            New-Item -ItemType Directory -Path $outDir | Out-Null
+            Copy-Item "$tsduckSource\bin\include\$Name.h" "$outDir\$Name.h"
+            $exclude = @('\unix\', '\linux\', '\mac\', '\bsd\', '\private\')
+            Get-ChildItem "$tsduckSource\src\lib$Name" -Recurse -Filter '*.h' |
+              Where-Object {
+                $path = $_.FullName
+                -not ($exclude | Where-Object { $path.Contains($_) })
+              } |
+              ForEach-Object {
+                Copy-Item $_.FullName $outDir
+              }
           }
 
-          $installer = Join-Path $env:RUNNER_TEMP $asset.name
-          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $installer
-          Start-Process -FilePath $installer -ArgumentList '/S', '/all=true' -Wait
+          Copy-Headers 'tscore'
+          Copy-Headers 'tsduck'
 
-          $tsduck = [Environment]::GetEnvironmentVariable('TSDUCK', 'Machine')
-          if (-not $tsduck) {
-            $tsduck = 'C:\Program Files\TSDuck'
-          }
-          if (-not (Test-Path (Join-Path $tsduck 'tsduck.props'))) {
-            throw "TSDuck development files were not found: $tsduck"
-          }
-
-          "TSDUCK=$tsduck" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "$tsduck\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+          "TSDUCK=$tsduckStage" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "$tsduckBin" | Out-File -FilePath $env:GITHUB_PATH -Append
 
       - name: Build
         run: msbuild msvc\dantto4k.sln /m /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143
