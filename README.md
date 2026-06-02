@@ -37,17 +37,25 @@ https://github.com/nekohkr/casproxyserver
 
 ## ビルド
 ### Windows
+
+TSDuck の DLL は不要です。ビルド時に tsduck のソースから静的ライブラリを自動生成してリンクします。
+
 #### 依存ライブラリの準備
 
-TSDuck の公式インストーラーを使用してインストールします。
-- https://github.com/tsduck/tsduck/releases
-インストーラーは環境変数 `TSDUCK` を自動的に設定します。ビルドシステムはこの環境変数を使用するため、インストール後に追加の作業は不要です。
+サブモジュール（asio・tsduck ソース）を取得します。
 
-asio の準備
-git submodule update --init
+```
+git submodule update --init --recursive
+```
 
 #### ビルド
-Visual Studio 2022 で `msvc/dantto4k.sln` を開いてビルドします。
+
+Visual Studio 2022 以降で `msvc/dantto4k.sln` を開いてビルドします。
+
+初回ビルド時に tsduck の静的ライブラリ（`tscorelib.lib` / `tsducklib.lib`）が自動的にビルドされます（10分程度）。2回目以降はライブラリが存在するためスキップされます。
+
+> **Note**
+> TSDuck インストーラーは不要です。`TSDUCK` 環境変数も使用しません。
 
 ### Ubuntu
 

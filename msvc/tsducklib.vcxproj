@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{B4C5D6E7-F8A9-4B0C-9D1E-2F3A4B5C6D7E}</ProjectGuid>
+    <Keyword>MakeFileProj</Keyword>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>Makefile</ConfigurationType>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>Makefile</ConfigurationType>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+
+  <PropertyGroup>
+    <_TSDuckScriptsDir>$([System.IO.Path]::GetFullPath('$(SolutionDir)..\thirdparty\tsduck\scripts\msvc\'))</_TSDuckScriptsDir>
+    <_TSDuckLibOut>$([System.IO.Path]::GetFullPath('$(SolutionDir)..\thirdparty\tsduck\bin\$(Configuration)-$(Platform)\tsducklib.lib'))</_TSDuckLibOut>
+    <!-- Build only if the output lib is missing; never clean tsduck artifacts -->
+    <_OverrideProps>$([System.IO.Path]::GetFullPath('$(SolutionDir)override-utf8.props'))</_OverrideProps>
+    <_BuildCmd>if not exist "$(_TSDuckLibOut)" "$(MSBuildBinPath)\MSBuild.exe" "$(_TSDuckScriptsDir)tsducklib.vcxproj" /p:Configuration=$(Configuration);Platform=$(Platform);PlatformToolset=v143 "/p:ForceImportBeforeCppTargets=$(_OverrideProps)" /m</_BuildCmd>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <NMakeBuildCommandLine>$(_BuildCmd)</NMakeBuildCommandLine>
+    <NMakeReBuildCommandLine>$(_BuildCmd)</NMakeReBuildCommandLine>
+    <NMakeCleanCommandLine>echo tsducklib: skipping clean (managed separately)</NMakeCleanCommandLine>
+    <NMakeOutput>$(_TSDuckLibOut)</NMakeOutput>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <NMakeBuildCommandLine>$(_BuildCmd)</NMakeBuildCommandLine>
+    <NMakeReBuildCommandLine>$(_BuildCmd)</NMakeReBuildCommandLine>
+    <NMakeCleanCommandLine>echo tsducklib: skipping clean (managed separately)</NMakeCleanCommandLine>
+    <NMakeOutput>$(_TSDuckLibOut)</NMakeOutput>
+  </PropertyGroup>
+
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>

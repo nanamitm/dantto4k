@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+
+  <!-- Static linking against tsduck/tscore built in thirdparty/tsduck -->
+
+  <PropertyGroup>
+    <TSDuckRootDir>$([System.IO.Path]::GetFullPath('$(SolutionDir)..\thirdparty\tsduck\'))</TSDuckRootDir>
+    <TSDuckStaticLibDir Condition="'$(Configuration)'=='Release'">$(TSDuckRootDir)bin\Release-x64\</TSDuckStaticLibDir>
+    <TSDuckStaticLibDir Condition="'$(Configuration)'=='Debug'">$(TSDuckRootDir)bin\Debug-x64\</TSDuckStaticLibDir>
+  </PropertyGroup>
+
+  <!-- Enumerate all public header directories from tsduck source tree -->
+  <ItemGroup>
+    <_TSCorePublicHeaders Include="$(TSDuckRootDir)src\libtscore\**\*.h"
+                          Exclude="$(TSDuckRootDir)src\libtscore\**\unix\**;
+                                   $(TSDuckRootDir)src\libtscore\**\linux\**;
+                                   $(TSDuckRootDir)src\libtscore\**\mac\**;
+                                   $(TSDuckRootDir)src\libtscore\**\bsd\**;
+                                   $(TSDuckRootDir)src\libtscore\**\private\**;
+                                   $(TSDuckRootDir)src\libtscore\**\__pycache__\**"/>
+    <_TSDuckPublicHeaders Include="$(TSDuckRootDir)src\libtsduck\**\*.h"
+                          Exclude="$(TSDuckRootDir)src\libtsduck\**\unix\**;
+                                   $(TSDuckRootDir)src\libtsduck\**\linux\**;
+                                   $(TSDuckRootDir)src\libtsduck\**\mac\**;
+                                   $(TSDuckRootDir)src\libtsduck\**\bsd\**;
+                                   $(TSDuckRootDir)src\libtsduck\**\private\**;
+                                   $(TSDuckRootDir)src\libtsduck\**\__pycache__\**"/>
+    <_TSCorePublicDirs Include="@(_TSCorePublicHeaders->'%(RootDir)%(Directory)'->Distinct())"/>
+    <_TSDuckPublicDirs Include="@(_TSDuckPublicHeaders->'%(RootDir)%(Directory)'->Distinct())"/>
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TSCoreIncludeDirs>@(_TSCorePublicDirs)</TSCoreIncludeDirs>
+    <TSDuckIncludeDirs>@(_TSDuckPublicDirs)</TSDuckIncludeDirs>
+  </PropertyGroup>
+
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <PreprocessorDefinitions>TSDUCK_STATIC_LIBRARY;TSCORE_STATIC_LIBRARY;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(TSCoreIncludeDirs);$(TSDuckIncludeDirs);$(TSDuckRootDir)bin\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <!-- suppress C4819 (code page mismatch) and VS 2025+ new warnings from SDK headers -->
+      <AdditionalOptions>/wd4819 /Wv:17 %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <AdditionalLibraryDirectories>$(TSDuckStaticLibDir);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>tsducklib.lib;tscorelib.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalOptions>/wholearchive:tsducklib.lib /wholearchive:tscorelib.lib %(AdditionalOptions)</AdditionalOptions>
+    </Link>
+  </ItemDefinitionGroup>
+
+</Project>
