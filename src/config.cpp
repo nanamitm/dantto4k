@@ -49,7 +49,7 @@ Config loadConfig(const std::string& filename) {
                  if (key == "mmtsDumpPath") {
                      config.mmtsDumpPath = value;
                  }
-                 if (key == "decode") {
+                 if (key == "decodeDump") {
                      config.decodeDump = (value == "true");
                  }
              }
