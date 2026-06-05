@@ -32,10 +32,6 @@ constexpr uint8_t componentTagToStreamId(uint8_t tag) {
 		return STREAM_ID_PRIVATE_STREAM_1;
 	}
 
-	if (tag == 0x38) {
-		return STREAM_ID_PRIVATE_STREAM_2;
-	}
-
 	return STREAM_ID_PRIVATE_STREAM_1;
 }
 

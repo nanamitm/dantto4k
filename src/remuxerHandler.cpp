@@ -354,26 +354,35 @@ void RemuxerHandler::writeSubtitle(const MmtTlv::MmtStream& mmtStream, const B24
     std::vector<uint8_t> pesOutput;
 
     PESPacket pes;
-    if (mmtStream.getComponentTag() == 0x30) {
-        uint64_t pts = subtitle.calcPts(programStartTime);
-        pts = std::max(pts, lastPcr / 300);
-        if (pts == 0) {
-            return;
-        }
-        pes.setPts(pts);
+    uint64_t pts = subtitle.calcPts(programStartTime);
+    subtitleDebugLog("writeSubtitle: tag=" + std::to_string(mmtStream.getComponentTag()) +
+        " calcPts=" + std::to_string(pts) +
+        " lastPcr=" + std::to_string(lastPcr) +
+        " programStartTime=" + std::to_string(programStartTime) +
+        " pesData.size=" + std::to_string(subtitle.pesData.size()));
+    pts = std::max(pts, lastPcr / 300);
+    if (pts == 0) {
+        subtitleDebugLog("writeSubtitle: pts==0, skipping");
+        return;
     }
+
+    // Ensure management data is sent before statement data so that libaribcaption
+    // has the language info it needs to accept statement packets.
+    writeCaptionManagementData(pts);
+
+    pes.setPts(pts);
 
     pes.setStreamId(componentTagToStreamId(mmtStream.getComponentTag()));
     pes.setPayload(&subtitle.pesData);
     pes.setPayloadLength(subtitle.pesData.size());
-    if (mmtStream.getComponentTag() == 0x30) {
-        pes.setPrivateData(&ccis);
-        pes.setStuffingByteLength(1);
-    }
+    pes.setPrivateData(&ccis);
+    pes.setStuffingByteLength(1);
     pes.pack(pesOutput);
 
     const auto pid = mmtStream.getMpeg2PacketId();
+    subtitleDebugLog("writeSubtitle: pts=" + std::to_string(pts) + " pid=" + std::to_string(pid) + " pesOutput.size=" + std::to_string(pesOutput.size()));
     if (pid > 0x1FFE) {
+        subtitleDebugLog("writeSubtitle: pid too large, skipping");
         return;
     }
     auto& cc = mapCC[pid];
@@ -424,29 +433,22 @@ void RemuxerHandler::writeCaptionManagementData(uint64_t pts) {
         if (stream.second.getAssetType() != MmtTlv::AssetType::stpp) {
             continue;
         }
+        if (stream.second.getComponentTag() < 0x30 || stream.second.getComponentTag() > 0x37) {
+            continue;
+        }
 
         B24::CaptionManagementData captionManagementData;
         B24::CaptionManagementData::Language language;
         language.languageCode = "jpn";
         language.format = 0b1000;
-        if (stream.second.getComponentTag() == 0x30) {
-            language.dmf = 0b1010;
-        }
-        else {
-            language.dmf = 0;
-        }
+        language.dmf = 0b1010;
 
         captionManagementData.languages.push_back(language);
         B24::DataGroup dataGroup;
         dataGroup.setGroupData(captionManagementData);
 
         B24::PESData pesData(dataGroup);
-        if (stream.second.getComponentTag() == 0x30) {
-            pesData.SetPESType(B24::PESData::PESType::Synchronized);
-        }
-        else {
-            pesData.SetPESType(B24::PESData::PESType::Asynchronous);
-        }
+        pesData.SetPESType(B24::PESData::PESType::Synchronized);
 
         std::vector<uint8_t> packedPesData;
 
@@ -454,16 +456,12 @@ void RemuxerHandler::writeCaptionManagementData(uint64_t pts) {
 
         std::vector<uint8_t> pesOutput;
         PESPacket pes;
-        if (stream.second.getComponentTag() == 0x30) {
-            pes.setPts(lastCaptionManagementDataPts);
-        }
+        pes.setPts(lastCaptionManagementDataPts);
         pes.setStreamId(componentTagToStreamId(stream.second.getComponentTag()));
         pes.setPayload(&packedPesData);
         pes.setPayloadLength(packedPesData.size());
-        if (stream.second.getComponentTag() == 0x30) {
-            pes.setPrivateData(&ccis);
-            pes.setStuffingByteLength(1);
-        }
+        pes.setPrivateData(&ccis);
+        pes.setStuffingByteLength(1);
         pes.pack(pesOutput);
 
         const auto pid = stream.second.getMpeg2PacketId();
@@ -933,6 +931,12 @@ void RemuxerHandler::onMpt(const MmtTlv::Mpt& mpt) {
                     continue;
                 }
 
+                if (asset.assetType == MmtTlv::AssetType::stpp &&
+                    (mmtStream->getComponentTag() < 0x30 || mmtStream->getComponentTag() > 0x37)) {
+                    streamIndex++;
+                    continue;
+                }
+
                 int streamType = assetType2streamType(asset.assetType);
                 if (streamType == 0) {
                     continue;
@@ -952,7 +956,25 @@ void RemuxerHandler::onMpt(const MmtTlv::Mpt& mpt) {
                     descriptor.format_identifier = 0x48455643; // HEVC
                     stream.descs.add(duck, descriptor);
                 }
-                else if (asset.assetType == MmtTlv::AssetType::stpp) {
+
+                for (const auto& descriptor : asset.descriptors.list) {
+                    switch (descriptor->getDescriptorTag()) {
+                    case MmtTlv::MhStreamIdentificationDescriptor::kDescriptorTag:
+                    {
+                        const auto* mmtDescriptor = static_cast<const MmtTlv::MhStreamIdentificationDescriptor*>(descriptor.get());
+
+                        if (asset.assetType == MmtTlv::AssetType::stpp) {
+                            stream.descs.add(duck, ts::StreamIdentifierDescriptor(static_cast<uint8_t>(mmtDescriptor->componentTag)));
+                        } else {
+                            auto tsDescriptor = DescriptorConverter<MmtTlv::MhStreamIdentificationDescriptor>::convert(*mmtDescriptor);
+                            stream.descs.add(duck, tsDescriptor);
+                        }
+                        break;
+                    }
+                    }
+                }
+
+                if (asset.assetType == MmtTlv::AssetType::stpp) {
                     ts::DataComponentDescriptor descriptor;
                     descriptor.data_component_id = 0x0008;
                     if (mmtStream->getComponentTag() == 0x30) {
@@ -962,19 +984,6 @@ void RemuxerHandler::onMpt(const MmtTlv::Mpt& mpt) {
                         descriptor.additional_data_component_info.push_back(0x3C);
                     }
                     stream.descs.add(duck, descriptor);
-                }
-
-                for (const auto& descriptor : asset.descriptors.list) {
-                    switch (descriptor->getDescriptorTag()) {
-                    case MmtTlv::MhStreamIdentificationDescriptor::kDescriptorTag:
-                    {
-                        const auto* mmtDescriptor = static_cast<const MmtTlv::MhStreamIdentificationDescriptor*>(descriptor.get());
-                        auto tsDescriptor = DescriptorConverter<MmtTlv::MhStreamIdentificationDescriptor>::convert(*mmtDescriptor);
-
-                        stream.descs.add(duck, tsDescriptor);
-                        break;
-                    }
-                    }
                 }
 
                 tsPmt.streams[mmtStream->getMpeg2PacketId()] = stream;
