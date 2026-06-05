@@ -548,8 +548,8 @@ void MmtTlvDemuxer::processMmtPackageTable(const Mpt& mpt) {
                 }
             }
             else {
-                mapFragmentValidator.erase(mptIt->first);
-                mapAssembler.erase(mptIt->first);
+                mapFragmentValidator.erase(it->first);
+                mapAssembler.erase(it->first);
                 it = mapStream.erase(it);
             }
         }
