@@ -313,7 +313,9 @@ struct PathParser {
 
     static bool isCommand(char c) {
         switch (c) {
-        case 'M': case 'm': case 'L': case 'l': case 'H': case 'h': case 'V': case 'v': case 'C': case 'c': case 'Z': case 'z':
+        case 'M': case 'm': case 'L': case 'l': case 'H': case 'h': case 'V': case 'v':
+        case 'C': case 'c': case 'Z': case 'z':
+        case 'A': case 'a': case 'Q': case 'q': case 'S': case 's': case 'T': case 't':
             return true;
         default:
             return false;
