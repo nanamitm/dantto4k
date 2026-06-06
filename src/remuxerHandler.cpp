@@ -619,13 +619,23 @@ void RemuxerHandler::onMhBit(const MmtTlv::MhBit& mhBit) {
 void RemuxerHandler::onMhEit(const MmtTlv::MhEit& mhEit) {
     tsid = mhEit.tlvStreamId;
 
-    if (mhEit.isPf() && mhEit.sectionNumber == 0 && !mhEit.events.empty()) {
-        std::tm startTime = EITConvertStartTime((mhEit.events.begin())->get()->startTime);
-        programStartTime = static_cast<uint64_t>(std::mktime(&startTime));
+    if (mhEit.isPf() && mhEit.sectionNumber == 0) {
+        for (const auto& mhEvent : mhEit.events) {
+            if (!mhEvent) {
+                continue;
+            }
+            std::tm startTime = EITConvertStartTime(mhEvent->startTime);
+            programStartTime = static_cast<uint64_t>(std::mktime(&startTime));
+            break;
+        }
     }
 
     ts::EIT tsEit(true, mhEit.isPf(), 0, mhEit.versionNumber % 32, true, mhEit.serviceId, mhEit.tlvStreamId, mhEit.originalNetworkId);
     for (const auto& mhEvent : mhEit.events) {
+        if (!mhEvent) {
+            continue;
+        }
+
         ts::EIT::Event tsEvent(&tsEit);
 
         tm startTime = EITConvertStartTime(mhEvent->startTime);

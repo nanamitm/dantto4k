@@ -59,12 +59,12 @@ std::vector<uint8_t> serializeMmtp(const Mmtp& mmtp)
     Common::WriteStream s;
 
     uint8_t b0 = static_cast<uint8_t>(
-        (mmtp.version          << 6) |
-        (mmtp.packetCounterFlag << 5) |
-        (mmtp.fecType          << 3) |
-        (mmtp.reserved1        << 2) |
-        (mmtp.extensionHeaderFlag << 1) |
-         mmtp.rapFlag);
+        (static_cast<uint8_t>(mmtp.version) << 6) |
+        (static_cast<uint8_t>(mmtp.packetCounterFlag) << 5) |
+        (static_cast<uint8_t>(mmtp.fecType) << 3) |
+        (static_cast<uint8_t>(mmtp.reserved1) << 2) |
+        (static_cast<uint8_t>(mmtp.extensionHeaderFlag) << 1) |
+         static_cast<uint8_t>(mmtp.rapFlag));
     s.put8U(b0);
 
     uint8_t b1 = static_cast<uint8_t>((mmtp.reserved2 << 6) | static_cast<uint8_t>(mmtp.payloadType));
@@ -141,140 +141,145 @@ DemuxStatus MmtTlvDemuxer::demux(Common::ReadStream& stream) {
 
     Common::ReadStream tlvDataStream(tlv.getData());
 
-    switch (tlv.getPacketType()) {
-    case TlvPacketType::Ipv4Packet:
-    {
-        statistics.tlvIpv4PacketCount++;
-        break;
-    }
-    case TlvPacketType::Ipv6Packet:
-    {
-        statistics.tlvIpv6PacketCount++;
-
-        IPv6Header ipv6(false);
-        if (!ipv6.unpack(tlvDataStream)) {
+    try {
+        switch (tlv.getPacketType()) {
+        case TlvPacketType::Ipv4Packet:
+        {
+            statistics.tlvIpv4PacketCount++;
             break;
         }
+        case TlvPacketType::Ipv6Packet:
+        {
+            statistics.tlvIpv6PacketCount++;
 
-        if (ipv6.nexthdr == IPv6::PROTOCOL_UDP) {
-            UDPHeader udpHeader;
-            if (!udpHeader.unpack(tlvDataStream)) {
+            IPv6Header ipv6(false);
+            if (!ipv6.unpack(tlvDataStream)) {
                 break;
             }
 
-            // NTP
-            if (udpHeader.destination_port == IPv6::PORT_NTP) {
-                NTPv4 ntp;
-                if (!ntp.unpack(tlvDataStream)) {
+            if (ipv6.nexthdr == IPv6::PROTOCOL_UDP) {
+                UDPHeader udpHeader;
+                if (!udpHeader.unpack(tlvDataStream)) {
                     break;
                 }
 
-                demuxerHandler->onNtp(ntp);
-            }
-        }
-        break;
-    }
-    case TlvPacketType::HeaderCompressedIpPacket:
-    {
-        statistics.tlvHeaderCompressedIpPacketCount++;
+                // NTP
+                if (udpHeader.destination_port == IPv6::PORT_NTP) {
+                    NTPv4 ntp;
+                    if (!ntp.unpack(tlvDataStream)) {
+                        break;
+                    }
 
-        if (!compressedIPPacket.unpack(tlvDataStream)) {
+                    demuxerHandler->onNtp(ntp);
+                }
+            }
             break;
         }
+        case TlvPacketType::HeaderCompressedIpPacket:
+        {
+            statistics.tlvHeaderCompressedIpPacketCount++;
+
+            if (!compressedIPPacket.unpack(tlvDataStream)) {
+                break;
+            }
         
-        if (!mmtp.unpack(tlvDataStream)) {
-            break;
-        }
+            if (!mmtp.unpack(tlvDataStream)) {
+                break;
+            }
         
-        auto mmtStat = statistics.getMmtStat(mmtp.packetId);
-        if (mmtStat->count == 0) {
-            mmtStat->lastPacketSequenceNumber = mmtp.packetSequenceNumber;
-            mmtStat->count++;
-        }
-        else {
-            const uint32_t expected = mmtStat->lastPacketSequenceNumber + 1;
-            if (expected != mmtp.packetSequenceNumber) {
-                mmtStat->drop += mmtp.packetSequenceNumber - expected;
+            auto mmtStat = statistics.getMmtStat(mmtp.packetId);
+            if (mmtStat->count == 0) {
+                mmtStat->lastPacketSequenceNumber = mmtp.packetSequenceNumber;
+                mmtStat->count++;
+            }
+            else {
+                const uint32_t expected = mmtStat->lastPacketSequenceNumber + 1;
+                if (expected != mmtp.packetSequenceNumber) {
+                    mmtStat->drop += mmtp.packetSequenceNumber - expected;
 
-                auto mmtStream = getStream(mmtp.packetId);
-                if (mmtStream) {
-                    mmtStream->mpuProcessor->clear();
-                    auto validator = getFragmentValidator(mmtp.packetId);
-                    validator->clear();
-                    auto assembler = getAssembler(mmtp.packetId);
-                    assembler->clear();
+                    auto mmtStream = getStream(mmtp.packetId);
+                    if (mmtStream) {
+                        mmtStream->mpuProcessor->clear();
+                        auto validator = getFragmentValidator(mmtp.packetId);
+                        validator->clear();
+                        auto assembler = getAssembler(mmtp.packetId);
+                        assembler->clear();
+                    }
+
+                    if (demuxerHandler) {
+                        demuxerHandler->onPacketDrop(mmtp.packetId, mmtStream);
+                    }
                 }
+                mmtStat->lastPacketSequenceNumber = mmtp.packetSequenceNumber;
+                mmtStat->count++;
+            }
 
-                if (demuxerHandler) {
-                    demuxerHandler->onPacketDrop(mmtp.packetId, mmtStream);
+            if (mmtp.extensionHeaderScrambling.has_value()) {
+                if (mmtp.extensionHeaderScrambling->encryptionFlag == EncryptionFlag::ODD ||
+                    mmtp.extensionHeaderScrambling->encryptionFlag == EncryptionFlag::EVEN) {
+                    if (!casHandler) {
+                        return DemuxStatus::WattingForEcm;
+                    }
+                    if (!casHandler->decrypt(mmtp)) {
+                        mmtStat->outputDrop++;
+                        return DemuxStatus::WattingForEcm;
+                    }
                 }
             }
-            mmtStat->lastPacketSequenceNumber = mmtp.packetSequenceNumber;
-            mmtStat->count++;
-        }
 
-        if (mmtp.extensionHeaderScrambling.has_value()) {
-            if (mmtp.extensionHeaderScrambling->encryptionFlag == EncryptionFlag::ODD ||
-                mmtp.extensionHeaderScrambling->encryptionFlag == EncryptionFlag::EVEN) {
-                if (!casHandler) {
-                    return DemuxStatus::WattingForEcm;
-                }
-                if (!casHandler->decrypt(mmtp)) {
-                    mmtStat->outputDrop++;
-                    return DemuxStatus::WattingForEcm;
-                }
+            // Write decoded TLV packet to dump stream (scrambling flag cleared, payload decrypted).
+            if (decodedDumpStream) {
+                auto cipBytes  = serializeCompressedIP(compressedIPPacket);
+                auto mmtpBytes = serializeMmtp(mmtp);
+                std::vector<uint8_t> payload;
+                payload.reserve(cipBytes.size() + mmtpBytes.size());
+                payload.insert(payload.end(), cipBytes.begin(),  cipBytes.end());
+                payload.insert(payload.end(), mmtpBytes.begin(), mmtpBytes.end());
+                writeTlvPacket(*decodedDumpStream, static_cast<uint8_t>(TlvPacketType::HeaderCompressedIpPacket), payload);
             }
-        }
 
-        // Write decoded TLV packet to dump stream (scrambling flag cleared, payload decrypted).
-        if (decodedDumpStream) {
-            auto cipBytes  = serializeCompressedIP(compressedIPPacket);
-            auto mmtpBytes = serializeMmtp(mmtp);
-            std::vector<uint8_t> payload;
-            payload.reserve(cipBytes.size() + mmtpBytes.size());
-            payload.insert(payload.end(), cipBytes.begin(),  cipBytes.end());
-            payload.insert(payload.end(), mmtpBytes.begin(), mmtpBytes.end());
-            writeTlvPacket(*decodedDumpStream, static_cast<uint8_t>(TlvPacketType::HeaderCompressedIpPacket), payload);
+            Common::ReadStream mmtpPayloadStream(mmtp.payload);
+            switch (mmtp.payloadType) {
+            case PayloadType::Mpu:
+                processMpu(mmtpPayloadStream);
+                break;
+            case PayloadType::ContainsOneOrMoreControlMessage:
+                processSignalingMessages(mmtpPayloadStream);
+                break;
+            default:
+                break;
+            }
+            break;
         }
-
-        Common::ReadStream mmtpPayloadStream(mmtp.payload);
-        switch (mmtp.payloadType) {
-        case PayloadType::Mpu:
-            processMpu(mmtpPayloadStream);
+        case TlvPacketType::TransmissionControlSignalPacket:
+        {
+            statistics.tlvTransmissionControlSignalPacketCount++;
+            // Pass through as-is to decoded dump.
+            if (decodedDumpStream)
+                writeTlvPacket(*decodedDumpStream,
+                    static_cast<uint8_t>(TlvPacketType::TransmissionControlSignalPacket),
+                    tlv.getData());
+            processTlvTable(tlvDataStream);
             break;
-        case PayloadType::ContainsOneOrMoreControlMessage:
-            processSignalingMessages(mmtpPayloadStream);
+        }
+        case TlvPacketType::NullPacket:
+        {
+            statistics.tlvNullPacketCount++;
+            // Pass through as-is to decoded dump.
+            if (decodedDumpStream)
+                writeTlvPacket(*decodedDumpStream,
+                    static_cast<uint8_t>(TlvPacketType::NullPacket),
+                    tlv.getData());
             break;
+        }
         default:
-            break;
+        {
+            statistics.tlvUndefinedCount++;
         }
-        break;
+        }
     }
-    case TlvPacketType::TransmissionControlSignalPacket:
-    {
-        statistics.tlvTransmissionControlSignalPacketCount++;
-        // Pass through as-is to decoded dump.
-        if (decodedDumpStream)
-            writeTlvPacket(*decodedDumpStream,
-                static_cast<uint8_t>(TlvPacketType::TransmissionControlSignalPacket),
-                tlv.getData());
-        processTlvTable(tlvDataStream);
-        break;
-    }
-    case TlvPacketType::NullPacket:
-    {
-        statistics.tlvNullPacketCount++;
-        // Pass through as-is to decoded dump.
-        if (decodedDumpStream)
-            writeTlvPacket(*decodedDumpStream,
-                static_cast<uint8_t>(TlvPacketType::NullPacket),
-                tlv.getData());
-        break;
-    }
-    default:
-    {
-        statistics.tlvUndefinedCount++;
-    }
+    catch (const std::out_of_range&) {
+        return DemuxStatus::NotValidTlv;
     }
 
     return DemuxStatus::Ok;
