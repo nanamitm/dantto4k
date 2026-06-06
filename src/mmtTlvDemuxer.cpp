@@ -93,16 +93,18 @@ std::vector<uint8_t> serializeMmtp(const Mmtp& mmtp)
     return s.getData();
 }
 
-// Write a complete TLV packet to stream: [0x7F][type][len_hi][len_lo][payload]
-void writeTlvPacket(std::ostream& out, uint8_t packetType, const std::vector<uint8_t>& payload)
+// Serialize a complete TLV packet: [0x7F][type][len_hi][len_lo][payload]
+std::vector<uint8_t> serializeTlvPacket(uint8_t packetType, const std::vector<uint8_t>& payload)
 {
     uint16_t len = static_cast<uint16_t>(payload.size());
-    uint8_t hdr[4] = { 0x7F, packetType,
-                       static_cast<uint8_t>(len >> 8),
-                       static_cast<uint8_t>(len & 0xFF) };
-    out.write(reinterpret_cast<const char*>(hdr), 4);
-    if (!payload.empty())
-        out.write(reinterpret_cast<const char*>(payload.data()), payload.size());
+    std::vector<uint8_t> packet;
+    packet.reserve(4 + payload.size());
+    packet.push_back(0x7F);
+    packet.push_back(packetType);
+    packet.push_back(static_cast<uint8_t>(len >> 8));
+    packet.push_back(static_cast<uint8_t>(len & 0xFF));
+    packet.insert(packet.end(), payload.begin(), payload.end());
+    return packet;
 }
 
 } // anonymous namespace
@@ -218,24 +220,31 @@ DemuxStatus MmtTlvDemuxer::demux(Common::ReadStream& stream) {
                 if (mmtp.extensionHeaderScrambling->encryptionFlag == EncryptionFlag::ODD ||
                     mmtp.extensionHeaderScrambling->encryptionFlag == EncryptionFlag::EVEN) {
                     if (!casHandler) {
+                        if (decodedDumpErrorCallback) {
+                            decodedDumpErrorCallback();
+                        }
                         return DemuxStatus::WattingForEcm;
                     }
                     if (!casHandler->decrypt(mmtp)) {
                         mmtStat->outputDrop++;
+                        if (decodedDumpErrorCallback) {
+                            decodedDumpErrorCallback();
+                        }
                         return DemuxStatus::WattingForEcm;
                     }
                 }
             }
 
-            // Write decoded TLV packet to dump stream (scrambling flag cleared, payload decrypted).
-            if (decodedDumpStream) {
+            // Write decoded TLV packet to dump callback (scrambling flag cleared, payload decrypted).
+            if (decodedDumpCallback) {
                 auto cipBytes  = serializeCompressedIP(compressedIPPacket);
                 auto mmtpBytes = serializeMmtp(mmtp);
                 std::vector<uint8_t> payload;
                 payload.reserve(cipBytes.size() + mmtpBytes.size());
                 payload.insert(payload.end(), cipBytes.begin(),  cipBytes.end());
                 payload.insert(payload.end(), mmtpBytes.begin(), mmtpBytes.end());
-                writeTlvPacket(*decodedDumpStream, static_cast<uint8_t>(TlvPacketType::HeaderCompressedIpPacket), payload);
+                auto packet = serializeTlvPacket(static_cast<uint8_t>(TlvPacketType::HeaderCompressedIpPacket), payload);
+                decodedDumpCallback(packet.data(), packet.size());
             }
 
             Common::ReadStream mmtpPayloadStream(mmtp.payload);
@@ -255,10 +264,10 @@ DemuxStatus MmtTlvDemuxer::demux(Common::ReadStream& stream) {
         {
             statistics.tlvTransmissionControlSignalPacketCount++;
             // Pass through as-is to decoded dump.
-            if (decodedDumpStream)
-                writeTlvPacket(*decodedDumpStream,
-                    static_cast<uint8_t>(TlvPacketType::TransmissionControlSignalPacket),
-                    tlv.getData());
+            if (decodedDumpCallback) {
+                auto packet = serializeTlvPacket(static_cast<uint8_t>(TlvPacketType::TransmissionControlSignalPacket), tlv.getData());
+                decodedDumpCallback(packet.data(), packet.size());
+            }
             processTlvTable(tlvDataStream);
             break;
         }
@@ -266,10 +275,10 @@ DemuxStatus MmtTlvDemuxer::demux(Common::ReadStream& stream) {
         {
             statistics.tlvNullPacketCount++;
             // Pass through as-is to decoded dump.
-            if (decodedDumpStream)
-                writeTlvPacket(*decodedDumpStream,
-                    static_cast<uint8_t>(TlvPacketType::NullPacket),
-                    tlv.getData());
+            if (decodedDumpCallback) {
+                auto packet = serializeTlvPacket(static_cast<uint8_t>(TlvPacketType::NullPacket), tlv.getData());
+                decodedDumpCallback(packet.data(), packet.size());
+            }
             break;
         }
         default:

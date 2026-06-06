@@ -1,12 +1,14 @@
 #include "mmtTlvDemuxer.h"
 #include "bonDriverContext.h"
 #include "acasHandler.h"
+#include "mmtsRecorder.h"
 
 BonDriverContext g_bonDriverContext;
 
 namespace {
 
 HINSTANCE hModule = nullptr;
+uint32_t legacyMmtsSessionId = 0;
 
 std::string getConfigFilePath(void* hModule) {
     char g_IniFilePath[_MAX_PATH];
@@ -19,6 +21,19 @@ std::string getConfigFilePath(void* hModule) {
     snprintf(g_IniFilePath, sizeof(g_IniFilePath), "%s%s%s.ini", drive, dir, fname);
 
     return g_IniFilePath;
+}
+
+void installRecordingCallbacks()
+{
+    g_bonDriverContext.demuxer.setDecodedDumpCallback([](const uint8_t* data, size_t size) {
+        MmtsRecorder::WriteDecoded(data, size);
+        if (config.decodeDump && g_bonDriverContext.mmtsDumpFs) {
+            g_bonDriverContext.mmtsDumpFs->write(reinterpret_cast<const char*>(data), static_cast<std::streamsize>(size));
+        }
+    });
+    g_bonDriverContext.demuxer.setDecodedDumpErrorCallback([]() {
+        MmtsRecorder::MarkDecodeFailure();
+    });
 }
 
 }
@@ -63,6 +78,7 @@ extern "C" __declspec(dllexport) IBonDriver* CreateBonDriver() {
         }
     });
     g_bonDriverContext.demuxer.setDemuxerHandler(g_bonDriverContext.handler);
+    installRecordingCallbacks();
 
     try {
         if (!g_bonDriverContext.bonTuner.init()) {
@@ -84,41 +100,53 @@ extern "C" __declspec(dllexport) IBonDriver* CreateBonDriver() {
 
 
 extern "C" __declspec(dllexport) BOOL WINAPI StartMmtsSave(const wchar_t* path, BOOL overwrite) {
-    if (path == nullptr || path[0] == L'\0') {
-        return FALSE;
+    if (legacyMmtsSessionId != 0) {
+        MmtsRecorder::Stop(legacyMmtsSessionId);
+        legacyMmtsSessionId = 0;
     }
-
-    if (!overwrite) {
-        DWORD attr = GetFileAttributesW(path);
-        if (attr != INVALID_FILE_ATTRIBUTES) {
-            return FALSE;
-        }
-    }
-
-    g_bonDriverContext.demuxer.setDecodedDumpStream(nullptr);
-    if (g_bonDriverContext.mmtsDumpFs) {
-        g_bonDriverContext.mmtsDumpFs->close();
-        g_bonDriverContext.mmtsDumpFs.reset();
-    }
-
-    g_bonDriverContext.mmtsDumpFs = std::make_unique<std::ofstream>(path, std::ios::binary);
-    if (!g_bonDriverContext.mmtsDumpFs->is_open()) {
-        g_bonDriverContext.mmtsDumpFs.reset();
-        return FALSE;
-    }
-
-    if (config.decodeDump) {
-        g_bonDriverContext.demuxer.setDecodedDumpStream(g_bonDriverContext.mmtsDumpFs.get());
-    }
-    return TRUE;
+    return MmtsRecorder::Start(path, overwrite != FALSE, &legacyMmtsSessionId) ? TRUE : FALSE;
 }
 
 extern "C" __declspec(dllexport) void WINAPI StopMmtsSave() {
-    g_bonDriverContext.demuxer.setDecodedDumpStream(nullptr);
-    if (g_bonDriverContext.mmtsDumpFs) {
-        g_bonDriverContext.mmtsDumpFs->close();
-        g_bonDriverContext.mmtsDumpFs.reset();
+    if (legacyMmtsSessionId != 0) {
+        MmtsRecorder::Stop(legacyMmtsSessionId);
+        legacyMmtsSessionId = 0;
     }
+}
+
+extern "C" __declspec(dllexport) BOOL WINAPI StartMmtsRecording(const wchar_t* path, BOOL overwrite, DWORD* sessionId) {
+    if (sessionId == nullptr) {
+        return FALSE;
+    }
+    uint32_t id = 0;
+    if (!MmtsRecorder::Start(path, overwrite != FALSE, &id)) {
+        return FALSE;
+    }
+    *sessionId = id;
+    return TRUE;
+}
+
+extern "C" __declspec(dllexport) void WINAPI StopMmtsRecording(DWORD sessionId) {
+    MmtsRecorder::Stop(sessionId);
+}
+
+extern "C" __declspec(dllexport) BOOL WINAPI GetMmtsRecordingStatus(DWORD sessionId, DWORD* actualMode, BOOL* failed, BOOL* fallbackUsed) {
+    uint32_t mode = 0;
+    bool statusFailed = false;
+    bool statusFallbackUsed = false;
+    if (!MmtsRecorder::GetStatus(sessionId, &mode, &statusFailed, &statusFallbackUsed)) {
+        return FALSE;
+    }
+    if (actualMode) {
+        *actualMode = mode;
+    }
+    if (failed) {
+        *failed = statusFailed ? TRUE : FALSE;
+    }
+    if (fallbackUsed) {
+        *fallbackUsed = statusFallbackUsed ? TRUE : FALSE;
+    }
+    return TRUE;
 }
 
 BOOL APIENTRY DllMain(HINSTANCE hModule, DWORD fdwReason, LPVOID lpReserved) {

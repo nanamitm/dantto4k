@@ -3,6 +3,7 @@
 #include <mutex>
 #include "config.h"
 #include "bonDriverContext.h"
+#include "mmtsRecorder.h"
 
 bool CBonTuner::init() {
 	HINSTANCE hBonDriverDLL = LoadLibraryA(config.bondriverPath.c_str());
@@ -82,6 +83,7 @@ const bool CBonTuner::GetTsStream(uint8_t** ppDst, uint32_t* pdwSize, uint32_t* 
 	do {
 		ret = pBonDriver2->GetTsStream(ppDst, pdwSize, pdwRemain);
 		if (ret) {
+			MmtsRecorder::WriteRaw(*ppDst, *pdwSize);
 			if (g_bonDriverContext.mmtsDumpFs && !config.decodeDump) {
                 g_bonDriverContext.mmtsDumpFs->write((char*)*ppDst, *pdwSize);
 			}
@@ -161,9 +163,6 @@ const bool CBonTuner::SetChannel(const uint32_t dwSpace, const uint32_t dwChanne
 		if (!g_bonDriverContext.mmtsDumpFs->is_open()) {
 			std::cerr << "Failed to open mmtsDumpPath: " << config.mmtsDumpPath << std::endl;
 			g_bonDriverContext.mmtsDumpFs.reset();
-		}
-		else if (config.decodeDump) {
-			g_bonDriverContext.demuxer.setDecodedDumpStream(g_bonDriverContext.mmtsDumpFs.get());
 		}
 	}
 

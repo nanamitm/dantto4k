@@ -204,6 +204,7 @@
     <ClCompile Include="../src/mhBroadcasterNameDescriptor.cpp" />
     <ClCompile Include="../src/mhServiceListDescriptor.cpp" />
     <ClCompile Include="../src/mhSiParameterDescriptor.cpp" />
+    <ClCompile Include="../src/mmtsRecorder.cpp" />
     <ClCompile Include="../src/mmtDescriptorFactory.cpp" />
     <ClCompile Include="../src/mmtTableFactory.cpp" />
     <ClCompile Include="../src/multimediaServiceInformationDescriptor.cpp" />
@@ -313,6 +314,7 @@
     <ClInclude Include="../src/mhBroadcasterNameDescriptor.h" />
     <ClInclude Include="../src/mhServiceListDescriptor.h" />
     <ClInclude Include="../src/mhSiParameterDescriptor.h" />
+    <ClInclude Include="../src/mmtsRecorder.h" />
     <ClInclude Include="../src/mmtDescriptorFactory.h" />
     <ClInclude Include="../src/mmtFragment.h" />
     <ClInclude Include="../src/mmtTableFactory.h" />

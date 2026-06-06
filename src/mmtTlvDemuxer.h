@@ -2,6 +2,8 @@
 #include <vector>
 #include <map>
 #include <list>
+#include <functional>
+#include <ostream>
 #include "stream.h"
 #include "mmtp.h"
 #include "tlv.h"
@@ -44,13 +46,21 @@ enum class DemuxStatus {
 
 class MmtTlvDemuxer {
 public:
+	using DecodedDumpCallback = std::function<void(const uint8_t*, size_t)>;
+
 	void setDemuxerHandler(DemuxerHandler& demuxerHandler);
 	void setCasHandler(std::unique_ptr<CasHandler> handler);
 
 	// When set, each decoded (ACAS-decrypted) TLV packet is written to this stream.
 	// Non-scrambled packets are passed through as-is.
 	// Caller owns the stream lifetime.
-	void setDecodedDumpStream(std::ostream* stream) { decodedDumpStream = stream; }
+	void setDecodedDumpStream(std::ostream* stream) {
+		decodedDumpCallback = stream != nullptr ?
+			[stream](const uint8_t* data, size_t size) { stream->write(reinterpret_cast<const char*>(data), size); } :
+			DecodedDumpCallback();
+	}
+	void setDecodedDumpCallback(DecodedDumpCallback callback) { decodedDumpCallback = std::move(callback); }
+	void setDecodedDumpErrorCallback(std::function<void()> callback) { decodedDumpErrorCallback = std::move(callback); }
 
 	DemuxStatus demux(Common::ReadStream& stream);
 	void clear();
@@ -99,7 +109,8 @@ private:
 	std::unique_ptr<CasHandler> casHandler;
 	DemuxerHandler* demuxerHandler = nullptr;
 	MmtTlvStatistics statistics;
-	std::ostream* decodedDumpStream = nullptr;
+	DecodedDumpCallback decodedDumpCallback;
+	std::function<void()> decodedDumpErrorCallback;
 
 };
 }

@@ -25,6 +25,16 @@ Usage:
 BonDriver_dantto4k.iniで設定されたBonDriverをロードして、復号化とMPEG-2 TSへの変換を行います。
 dantto4kは64bitで配布しており、BonRecTestおよびBonDriver_BDAは64bitである必要があります。
 
+EDCB 連携向けに、復号済み TLV/MMTS を複数ファイルへ同時保存する export も提供します。
+
+```cpp
+extern "C" __declspec(dllexport) BOOL WINAPI StartMmtsRecording(const wchar_t* path, BOOL overwrite, DWORD* sessionId);
+extern "C" __declspec(dllexport) void WINAPI StopMmtsRecording(DWORD sessionId);
+extern "C" __declspec(dllexport) BOOL WINAPI GetMmtsRecordingStatus(DWORD sessionId, DWORD* actualMode, BOOL* failed, BOOL* fallbackUsed);
+```
+
+録画セッション中は復号済み TLV/MMTS と raw shadow を並行保存します。復号できないパケットを検出した場合は raw fallback として、停止時に raw shadow を本ファイルへ昇格します。
+
 #### Mirakurunでの動作
 PT4Kで動作する場合、チャンネル再生まで15～20秒かかるため、Mirakurunのtimeout(20秒)を超える場合があります。
 Mirakurunのソースコードを修正してtimeoutを30秒以上に変更する必要があります。

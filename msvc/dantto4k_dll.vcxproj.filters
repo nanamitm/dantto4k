@@ -202,6 +202,9 @@
     <ClCompile Include="../src/mhSiParameterDescriptor.cpp">
       <Filter>mmttlv\mmt\descriptors</Filter>
     </ClCompile>
+    <ClCompile Include="../src/mmtsRecorder.cpp">
+      <Filter>dantto4k</Filter>
+    </ClCompile>
     <ClCompile Include="../src/relatedBroadcasterDescriptor.cpp">
       <Filter>mmttlv\mmt\descriptors</Filter>
     </ClCompile>
@@ -539,6 +542,9 @@
     </ClInclude>
     <ClInclude Include="../src/mhSiParameterDescriptor.h">
       <Filter>mmttlv\mmt\descriptors</Filter>
+    </ClInclude>
+    <ClInclude Include="../src/mmtsRecorder.h">
+      <Filter>dantto4k</Filter>
     </ClInclude>
     <ClInclude Include="../src/relatedBroadcasterDescriptor.h">
       <Filter>mmttlv\mmt\descriptors</Filter>
