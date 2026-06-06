@@ -86,6 +86,7 @@ private:
 	};
 
 	void writeStream(const MmtTlv::MmtStream& mmtStream, const MmtTlv::MfuData& mfuData, const std::vector<uint8_t>& data);
+	void writePcr(uint64_t pcrBase90k);
 	void writeSubtitle(const MmtTlv::MmtStream& mmtStream, const B24SubtitleOutput& subtitle);
 	void writeCaptionManagementData(uint64_t pts);
 	void convertAndWriteSubtitle(const MmtTlv::MmtStream& mmtStream, const std::string& ttml);
@@ -101,6 +102,7 @@ private:
 	uint64_t adtsDropCount{0};
 	int tsid{-1};
 	uint64_t lastPcr{};
+	uint64_t lastWrittenPcr{};
 	uint64_t lastCaptionManagementDataPts{};
 	uint64_t programStartTime{};
 	inline static const std::vector<uint8_t> ccis = { 0x43, 0x43, 0x49, 0x53, 0x01, 0x3F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, };

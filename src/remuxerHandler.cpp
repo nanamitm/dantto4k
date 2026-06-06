@@ -267,6 +267,10 @@ void RemuxerHandler::writeStream(const MmtTlv::MmtStream& mmtStream, const MmtTl
             tsDts = av_rescale_q(mfuData.dts, timeBase, tsTimeBase);
         }
 
+        if (mmtStream.getAssetType() == MmtTlv::AssetType::hev1 && tsDts != MmtTlv::NOPTS_VALUE) {
+            writePcr(tsDts);
+        }
+
         std::vector<uint8_t> pesOutput;
         PESPacket pes;
         pes.setPts(tsPts);
@@ -348,6 +352,29 @@ void RemuxerHandler::writeStream(const MmtTlv::MmtStream& mmtStream, const MmtTl
             pendingData.erase(pendingData.begin(), pendingData.begin() + offset);
         }
     }
+}
+
+void RemuxerHandler::writePcr(uint64_t pcrBase90k) {
+    if (pcrBase90k == MmtTlv::NOPTS_VALUE) {
+        return;
+    }
+    // Keep PCR sparse but regular enough for DirectShow splitters.
+    if (lastWrittenPcr != 0 && pcrBase90k <= lastWrittenPcr + 90 * 100) {
+        return;
+    }
+
+    auto& cc = mapCC[PCR_PID];
+    ts::TSPacket packet;
+    packet.init(PCR_PID, cc & 0xF, 0);
+    cc++;
+
+    packet.setPCR(pcrBase90k * 300, true);
+    if (outputCallback) {
+        outputCallback(packet.b, packet.getHeaderSize() + packet.getPayloadSize());
+    }
+
+    lastPcr = pcrBase90k * 300;
+    lastWrittenPcr = pcrBase90k;
 }
 
 void RemuxerHandler::writeSubtitle(const MmtTlv::MmtStream& mmtStream, const B24SubtitleOutput& subtitle) {
@@ -1174,18 +1201,7 @@ void RemuxerHandler::onNit(const MmtTlv::Nit& nit) {
 }
 
 void RemuxerHandler::onNtp(const MmtTlv::NTPv4& ntp) {
-    auto& cc = mapCC[PCR_PID];
-    ts::TSPacket packet;
-    packet.init(PCR_PID, cc & 0xF, 0);
-    cc++;
-
-    // Add 0.1 seconds to resolve the playback issue in VLC
-    packet.setPCR(ntp.transmit_timestamp.toPcrValue() + 2700000, true);
-    if (outputCallback) {
-        outputCallback(packet.b, packet.getHeaderSize() + packet.getPayloadSize());
-    }
-
-    lastPcr = ntp.transmit_timestamp.toPcrValue();
+    writePcr(ntp.transmit_timestamp.toPcrValue() / 300);
 
     writeCaptionManagementData(ntp.transmit_timestamp.toPcrValue() / 300);
 }
@@ -1200,6 +1216,7 @@ void RemuxerHandler::clear() {
     mapPendingSubtitleTtml.clear();
     tsid = -1;
     lastPcr = 0;
+    lastWrittenPcr = 0;
     lastCaptionManagementDataPts = 0;
     programStartTime = 0;
 }
