@@ -43,6 +43,37 @@ uint64_t parseTimestamp(const std::string& timestamp) {
     return hours * 3600 * 1000ULL + minutes * 60 * 1000ULL + seconds * 1000ULL + millis;
 }
 
+std::optional<uint64_t> tryParseTimestamp(const std::string& timestamp) {
+    try {
+        return parseTimestamp(timestamp);
+    }
+    catch (const std::exception&) {
+        return std::nullopt;
+    }
+}
+
+std::optional<TTMLCssValue> tryParseCssValue(const std::string& input) {
+    try {
+        return TTMLCssValueParser::parse(input);
+    }
+    catch (const std::exception&) {
+        return std::nullopt;
+    }
+}
+
+std::optional<TTMLCssValuePair> tryParseCssPair(const std::string& input) {
+    try {
+        return TTMLCssValueParser::parsePair(input);
+    }
+    catch (const std::exception&) {
+        return std::nullopt;
+    }
+}
+
+bool isLengthPair(const TTMLCssValuePair& pair) {
+    return pair.first.is<TTMLCssValueLength>() && pair.second.is<TTMLCssValueLength>();
+}
+
 }
 
 TTML TTMLPaser::parse(const std::string& input) {
@@ -57,10 +88,16 @@ TTML TTMLPaser::parse(const std::string& input) {
         TTMLRegion region;
         region.id = p.attribute("xml:id").value();
         if (p.attribute("tts:extent")) {
-            region.extent = TTMLCssValueParser::parsePair(p.attribute("tts:extent").value());
+            auto value = tryParseCssPair(p.attribute("tts:extent").value());
+            if (value && isLengthPair(*value)) {
+                region.extent = *value;
+            }
         }
         if (p.attribute("tts:origin")) {
-            region.origin = TTMLCssValueParser::parsePair(p.attribute("tts:origin").value());
+            auto value = tryParseCssPair(p.attribute("tts:origin").value());
+            if (value && isLengthPair(*value)) {
+                region.origin = *value;
+            }
         }
         output.regions.push_back(region);
     }
@@ -69,22 +106,38 @@ TTML TTMLPaser::parse(const std::string& input) {
         TTMLStyle style;
         style.id = p.attribute("xml:id").value();
         if (p.attribute("tts:fontSize")) {
-            style.fontSize = TTMLCssValueParser::parsePair(p.attribute("tts:fontSize").value());
+            auto value = tryParseCssPair(p.attribute("tts:fontSize").value());
+            if (value && isLengthPair(*value)) {
+                style.fontSize = *value;
+            }
         }
         if (p.attribute("tts:lineHeight")) {
-            style.lineHeight = TTMLCssValueParser::parse(p.attribute("tts:lineHeight").value());
+            auto value = tryParseCssValue(p.attribute("tts:lineHeight").value());
+            if (value && value->is<TTMLCssValueLength>()) {
+                style.lineHeight = *value;
+            }
         }
         if (p.attribute("tts:fontWeight")) {
-            style.fontWeight = TTMLCssValueParser::parse(p.attribute("tts:fontWeight").value());
+            if (auto value = tryParseCssValue(p.attribute("tts:fontWeight").value())) {
+                style.fontWeight = *value;
+            }
         }
         if (p.attribute("tts:fontStyle")) {
-            style.fontStyle = TTMLCssValueParser::parse(p.attribute("tts:fontStyle").value());
+            if (auto value = tryParseCssValue(p.attribute("tts:fontStyle").value())) {
+                style.fontStyle = *value;
+            }
         }
         if (p.attribute("tts:color")) {
-            style.color = TTMLCssValueParser::parse(p.attribute("tts:color").value());
+            auto value = tryParseCssValue(p.attribute("tts:color").value());
+            if (value && value->is<TTMLCssValueColor>()) {
+                style.color = *value;
+            }
         }
         if (p.attribute("tts:backgroundColor")) {
-            style.backgroundColor = TTMLCssValueParser::parse(p.attribute("tts:backgroundColor").value());
+            auto value = tryParseCssValue(p.attribute("tts:backgroundColor").value());
+            if (value && value->is<TTMLCssValueColor>()) {
+                style.backgroundColor = *value;
+            }
         }
 
         output.styles.push_back(style);
@@ -93,10 +146,10 @@ TTML TTMLPaser::parse(const std::string& input) {
     for (pugi::xml_node div : doc.child("tt").child("body").children("div")) {
         TTMLDivTag divTag;
         if (div.attribute("begin")) {
-            divTag.begin = parseTimestamp(div.attribute("begin").value());
+            divTag.begin = tryParseTimestamp(div.attribute("begin").value());
         }
         if (div.attribute("end")) {
-            divTag.end = parseTimestamp(div.attribute("end").value());
+            divTag.end = tryParseTimestamp(div.attribute("end").value());
         }
 
         for (pugi::xml_node p : div.children("p")) {
@@ -158,35 +211,26 @@ TTML TTMLPaser::parse(const std::string& input) {
 }
 
 TTMLCssValue TTMLCssValueParser::parse(const std::string& input) {
-    try {
-        if (input.find("px") != std::string::npos || input.find("em") != std::string::npos ||
-            input.find("rem") != std::string::npos || input.find("%") != std::string::npos) {
-            std::regex regex(R"(^([+-]?\d*\.?\d+)(px|em|rem|%)$)");
-            std::smatch match;
-            if (std::regex_match(input, match, regex)) {
-                return TTMLCssValue(TTMLCssValueLength(std::stof(match[1]), match[2]));
-            }
-            else {
-                throw std::invalid_argument("Invalid length value: " + input);
-            }
+    if (input.find("px") != std::string::npos || input.find("em") != std::string::npos ||
+        input.find("rem") != std::string::npos || input.find("%") != std::string::npos) {
+        std::regex regex(R"(^([+-]?\d*\.?\d+)(px|em|rem|%)$)");
+        std::smatch match;
+        if (std::regex_match(input, match, regex)) {
+            return TTMLCssValue(TTMLCssValueLength(std::stof(match[1]), match[2]));
         }
-
-        if (input.find("#") == 0) {
-            return TTMLCssValue(TTMLCssValueColor(input));
-        }
-
-        static const std::set<std::string> validKeywords = { "bold", "italic", "normal", "none" };
-        if (validKeywords.find(input) != validKeywords.end()) {
-            return TTMLCssValue(TTMLCssValueKeyword(input));
-        }
-
-        return TTMLCssValue(TTMLCssValueNumber(std::stof(input)));
-
+        throw std::invalid_argument("Invalid length value: " + input);
     }
-    catch (const std::invalid_argument& e) {
-        std::cerr << e.what() << std::endl;
-        throw;
+
+    if (input.find("#") == 0) {
+        return TTMLCssValue(TTMLCssValueColor(input));
     }
+
+    static const std::set<std::string> validKeywords = { "bold", "italic", "normal", "none" };
+    if (validKeywords.find(input) != validKeywords.end()) {
+        return TTMLCssValue(TTMLCssValueKeyword(input));
+    }
+
+    return TTMLCssValue(TTMLCssValueNumber(std::stof(input)));
 }
 
 TTMLCssValuePair TTMLCssValueParser::parsePair(const std::string& input) {

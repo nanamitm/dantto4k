@@ -7,14 +7,24 @@
 namespace MmtTlv {
 
 std::pair<int64_t, int64_t> MmtStream::getNextPtsDts() {
+    if (!lastMpuSequenceNumber || timeBase.num == 0 || timeBase.den == 0) {
+        throw std::out_of_range("timestamp is not available");
+    }
+
     const auto timestamp = getCurrentTimestamp();
+
+    if (timestamp.second.numOfAu == 0) {
+        throw std::out_of_range("timestamp is not available");
+    }
+
+    if (auIndex >= timestamp.second.numOfAu ||
+        timestamp.second.ptsOffsets.size() < auIndex ||
+        timestamp.second.dtsPtsOffsets.size() <= auIndex) {
+        throw std::out_of_range("au index out of bounds");
+    }
 
     int64_t ptime = av_rescale(timestamp.first.mpuPresentationTime, timeBase.den,
         1000000ll * timeBase.num);
-
-    if (auIndex >= timestamp.second.numOfAu) {
-        throw std::out_of_range("au index out of bounds");
-    }
 
     int64_t dts = ptime - timestamp.second.mpuDecodingTimeOffset;
     for (uint32_t j = 0; j < auIndex; ++j) {

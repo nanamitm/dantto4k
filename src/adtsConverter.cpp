@@ -15,6 +15,8 @@ constexpr int convertAdtsAudioObjectType(int aot) {
 }
 
 bool ADTSConverter::convert(const uint8_t* input, size_t size, std::vector<uint8_t>& output) {
+    output.clear();
+
     if (size < 3) {
         return false;
     }
@@ -48,6 +50,10 @@ bool ADTSConverter::convert(const uint8_t* input, size_t size, std::vector<uint8
     int frameLength = slotLength + 7;
     int bufferFullness = 0x7FF;
 
+    if (static_cast<size_t>(i) + slotLength + 1 > size) {
+        return false;
+    }
+
     output.resize(frameLength);
 
     // ADTS Header
@@ -72,9 +78,6 @@ bool ADTSConverter::convert(const uint8_t* input, size_t size, std::vector<uint8
     output.data()[6] = (bufferFullness & 0b00000111111) << 2 |
         0/* rdb in frame */;
 
-    if (static_cast<size_t>(i) + slotLength + 1 > size) {
-        return false;
-    }
     for (int i2 = 0; i2 < slotLength; i2++) {
         output.data()[7 + i2] = (input[i + i2] & 0b00000111) << 5 | (input[i + i2 + 1] & 0b11111000) >> 3;
     }
@@ -83,6 +86,10 @@ bool ADTSConverter::convert(const uint8_t* input, size_t size, std::vector<uint8
 }
 
 bool ADTSConverter::unpackStreamMuxConfig(uint8_t* input, size_t size) {
+    if (size < 7) {
+        return false;
+    }
+
     int audioMuxVersion = (input[0] & 0b10000000) >> 7;
 
     // restricted to 0
@@ -129,6 +136,10 @@ bool ADTSConverter::unpackStreamMuxConfig(uint8_t* input, size_t size) {
 }
 
 bool ADTSConverter::unpackAudioSpecificConfig(uint8_t* input, size_t size) {
+    if (size < 4) {
+        return false;
+    }
+
     audioObjectType = (input[2] & 0b11111000) >> 3;
     if (audioObjectType == 28) {
         return false;

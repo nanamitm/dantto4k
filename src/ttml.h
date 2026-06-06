@@ -74,6 +74,11 @@ public:
     }
 
     template <typename T>
+    bool is() const {
+        return std::holds_alternative<T>(value);
+    }
+
+    template <typename T>
     void setValue(const T& new_value) {
         value = new_value;
     }

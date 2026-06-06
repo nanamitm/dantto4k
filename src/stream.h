@@ -34,10 +34,10 @@ public:
     }
 
     void skip(uint64_t pos) {
-        if (size < this->pos + pos) {
+        if (pos > leftBytes()) {
             throw std::out_of_range("Access out of bounds");
         }
-        this->pos += pos;
+        this->pos += static_cast<size_t>(pos);
     }
 
     size_t read(void* dst, size_t size) {
@@ -53,7 +53,7 @@ public:
     }
 
     size_t peek(void* dst, size_t size) {
-        if (this->size < pos + size) {
+        if (size > leftBytes()) {
             throw std::out_of_range("Access out of bounds");
         }
 
@@ -62,7 +62,7 @@ public:
     }
 
     size_t peek(std::span<uint8_t> data) {
-        if (size < pos + data.size()) {
+        if (data.size() > leftBytes()) {
             throw std::out_of_range("Access out of bounds");
         }
 
@@ -113,7 +113,7 @@ public:
 private:
     template<typename T>
     T peekObject() {
-        if (size < pos + sizeof(T)) {
+        if (sizeof(T) > leftBytes()) {
             throw std::out_of_range("Access out of bounds");
         }
         return *reinterpret_cast<const T*>(buffer.data() + pos);

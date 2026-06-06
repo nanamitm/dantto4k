@@ -16,13 +16,17 @@ std::optional<MfuData> MpuVideoProcessor::process(MmtStream& mmtStream, const st
     MfuData mfuData;
 
     if (nalUnitSize == 0) {
-        buffer.clear(); // 前のNALユニットの残データをクリア
+        buffer.clear(); // Clear leftover data from the previous NAL unit.
         if (stream.leftBytes() < 4) {
             return std::nullopt;
         }
 
         nalUnitSize = stream.getBe32U();
         if (nalUnitSize > MAX_NAL_SIZE) {
+            clear();
+            return std::nullopt;
+        }
+        if (nalUnitSize == 0 || stream.leftBytes() == 0) {
             clear();
             return std::nullopt;
         }

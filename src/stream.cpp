@@ -25,7 +25,7 @@ ReadStream::ReadStream(const std::vector<uint8_t>& buffer, size_t size)
 ReadStream::ReadStream(ReadStream& stream, size_t size)
     : buffer(stream.buffer)
 {
-    if (stream.buffer.size() < stream.pos + size) {
+    if (size > stream.leftBytes()) {
         throw std::out_of_range("Access out of bounds");
     }
 
