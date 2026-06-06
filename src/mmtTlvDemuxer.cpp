@@ -223,12 +223,20 @@ DemuxStatus MmtTlvDemuxer::demux(Common::ReadStream& stream) {
                         if (decodedDumpErrorCallback) {
                             decodedDumpErrorCallback();
                         }
+                        if (decodedDumpCallback) {
+                            auto packet = serializeTlvPacket(static_cast<uint8_t>(TlvPacketType::HeaderCompressedIpPacket), tlv.getData());
+                            decodedDumpCallback(packet.data(), packet.size());
+                        }
                         return DemuxStatus::WattingForEcm;
                     }
                     if (!casHandler->decrypt(mmtp)) {
                         mmtStat->outputDrop++;
                         if (decodedDumpErrorCallback) {
                             decodedDumpErrorCallback();
+                        }
+                        if (decodedDumpCallback) {
+                            auto packet = serializeTlvPacket(static_cast<uint8_t>(TlvPacketType::HeaderCompressedIpPacket), tlv.getData());
+                            decodedDumpCallback(packet.data(), packet.size());
                         }
                         return DemuxStatus::WattingForEcm;
                     }

@@ -27,6 +27,8 @@ Usage:
 dantto4k --decode-mmts input.mmts output.mmts
 ```
 
+復号できないパケットは元の TLV パケットのまま出力を継続し、終了時に復号できなかったパケット数を stderr に表示します。
+
 ### BonDriver_dantto4k.dll
 リアルタイムで復号化とMPEG-2 TSへの変換を行うBonDriverです。
 BonDriver_dantto4k.iniで設定されたBonDriverをロードして、復号化とMPEG-2 TSへの変換を行います。

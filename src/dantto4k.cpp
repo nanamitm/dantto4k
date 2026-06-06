@@ -268,14 +268,14 @@ int main(int argc, char* argv[]) {
     RemuxerHandler handler(demuxer);
     NullDemuxerHandler nullHandler;
     std::unique_ptr<BufferedOutput> bufferedOutput;
-    bool decodeDumpFailed = false;
+    uint64_t decodeFailedPacketCount = 0;
 
     if (args.decodeMmts) {
         demuxer.setDecodedDumpCallback([&](const uint8_t* data, size_t size) {
             outputStream->write(reinterpret_cast<const char*>(data), static_cast<std::streamsize>(size));
         });
         demuxer.setDecodedDumpErrorCallback([&]() {
-            decodeDumpFailed = true;
+            decodeFailedPacketCount++;
         });
         demuxer.setDemuxerHandler(nullHandler);
     }
@@ -356,9 +356,8 @@ int main(int argc, char* argv[]) {
     }
     demuxer.clear();
 
-    if (decodeDumpFailed) {
-        std::cerr << "Failed to decrypt one or more MMTS packets" << std::endl;
-        return 2;
+    if (args.decodeMmts) {
+        std::cerr << "MMTS decode failed packets: " << decodeFailedPacketCount << std::endl;
     }
 
     return 0;
