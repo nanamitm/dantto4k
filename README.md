@@ -15,9 +15,16 @@ Usage:
                                 Specify the smart card reader to use
       --customWinscardDLL arg   Specify the path to a winscard.dll
       --disableADTSConversion   Disable ADTS conversion
+      --decode-mmts             Output ACAS-decrypted MMT/TLV instead of MPEG-2 TS
       --no-progress             Disable progress display
       --no-stats                Disable packet statistics
       --help                    Show help
+```
+
+復号済み MMTS/TLV をファイルへ書き出す場合は `--decode-mmts` を指定します。
+
+```
+dantto4k --decode-mmts input.mmts output.mmts
 ```
 
 ### BonDriver_dantto4k.dll

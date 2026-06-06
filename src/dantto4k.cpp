@@ -4,6 +4,7 @@
 #include "remuxerHandler.h"
 #include "config.h"
 #include "mmtTlvDemuxer.h"
+#include "demuxerHandler.h"
 #include "aribUtil.h"
 #include "casProxyClient.h"
 #include "acasHandler.h"
@@ -25,9 +26,13 @@ struct Args {
     std::string smartCardReaderName;
     std::string customWinscardDLL;
     bool disableADTSConversion{false};
+    bool decodeMmts{false};
     bool listSmartCardReader{false};
     bool noProgress{false};
     bool noStats{false};
+};
+
+class NullDemuxerHandler : public MmtTlv::DemuxerHandler {
 };
 
 Args parseArguments(int argc, char* argv[]) {
@@ -46,6 +51,7 @@ Args parseArguments(int argc, char* argv[]) {
             ("customWinscardDLL", "Specify the path to a winscard.dll", cxxopts::value<std::string>())
 #endif
             ("disableADTSConversion", "Disable ADTS conversion", cxxopts::value<bool>()->default_value("false"))
+            ("decode-mmts", "Output ACAS-decrypted MMT/TLV instead of MPEG-2 TS", cxxopts::value<bool>()->default_value("false"))
             ("no-progress", "Disable progress display", cxxopts::value<bool>()->default_value("false"))
             ("no-stats", "Disable packet statistics", cxxopts::value<bool>()->default_value("false"))
             ("help", "Show help");
@@ -101,6 +107,9 @@ Args parseArguments(int argc, char* argv[]) {
 
         if (result["disableADTSConversion"].count()) {
             args.disableADTSConversion = result["disableADTSConversion"].as<bool>();
+        }
+        if (result["decode-mmts"].count()) {
+            args.decodeMmts = result["decode-mmts"].as<bool>();
         }
         if (result["no-progress"].count()) {
             args.noProgress = result["no-progress"].as<bool>();
@@ -257,23 +266,35 @@ int main(int argc, char* argv[]) {
 
     MmtTlv::MmtTlvDemuxer demuxer;
     RemuxerHandler handler(demuxer);
+    NullDemuxerHandler nullHandler;
     std::unique_ptr<BufferedOutput> bufferedOutput;
+    bool decodeDumpFailed = false;
 
-    if (useStdout) {
-        handler.setOutputCallback([&](const uint8_t* data, size_t size) {
-            assert(size == 188);
-            outputStream->write(reinterpret_cast<const char*>(data), size);
+    if (args.decodeMmts) {
+        demuxer.setDecodedDumpCallback([&](const uint8_t* data, size_t size) {
+            outputStream->write(reinterpret_cast<const char*>(data), static_cast<std::streamsize>(size));
         });
+        demuxer.setDecodedDumpErrorCallback([&]() {
+            decodeDumpFailed = true;
+        });
+        demuxer.setDemuxerHandler(nullHandler);
     }
     else {
-        bufferedOutput = std::make_unique<BufferedOutput>(*outputStream);
-        handler.setOutputCallback([&, bo = bufferedOutput.get()](const uint8_t* data, size_t size) {
-            assert(size == 188);
-            bo->write(data, size);
-        });
+        if (useStdout) {
+            handler.setOutputCallback([&](const uint8_t* data, size_t size) {
+                assert(size == 188);
+                outputStream->write(reinterpret_cast<const char*>(data), size);
+            });
+        }
+        else {
+            bufferedOutput = std::make_unique<BufferedOutput>(*outputStream);
+            handler.setOutputCallback([&, bo = bufferedOutput.get()](const uint8_t* data, size_t size) {
+                assert(size == 188);
+                bo->write(data, size);
+            });
+        }
+        demuxer.setDemuxerHandler(handler);
     }
-
-    demuxer.setDemuxerHandler(handler);
 
     try {
         // Create ACAS handler and initialize the smart card
@@ -329,11 +350,16 @@ int main(int argc, char* argv[]) {
     progressReporter.finish();
     if (!args.noStats) {
         demuxer.printStatistics();
-        if (handler.getAdtsDropCount() > 0) {
+        if (!args.decodeMmts && handler.getAdtsDropCount() > 0) {
             std::cout << "ADTS conversion drop: " << handler.getAdtsDropCount() << std::endl;
         }
     }
     demuxer.clear();
+
+    if (decodeDumpFailed) {
+        std::cerr << "Failed to decrypt one or more MMTS packets" << std::endl;
+        return 2;
+    }
 
     return 0;
 }
