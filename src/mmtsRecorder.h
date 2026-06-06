@@ -15,7 +15,6 @@ enum ActualMode : uint32_t {
 bool Start(const wchar_t* path, bool overwrite, uint32_t* sessionId);
 void Stop(uint32_t sessionId);
 bool GetStatus(uint32_t sessionId, uint32_t* actualMode, bool* failed, bool* fallbackUsed);
-void WriteRaw(const uint8_t* data, size_t size);
 void WriteDecoded(const uint8_t* data, size_t size);
 void MarkDecodeFailure();
 

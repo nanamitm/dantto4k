@@ -83,7 +83,6 @@ const bool CBonTuner::GetTsStream(uint8_t** ppDst, uint32_t* pdwSize, uint32_t* 
 	do {
 		ret = pBonDriver2->GetTsStream(ppDst, pdwSize, pdwRemain);
 		if (ret) {
-			MmtsRecorder::WriteRaw(*ppDst, *pdwSize);
 			if (g_bonDriverContext.mmtsDumpFs && !config.decodeDump) {
                 g_bonDriverContext.mmtsDumpFs->write((char*)*ppDst, *pdwSize);
 			}

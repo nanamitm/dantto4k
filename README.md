@@ -42,7 +42,7 @@ extern "C" __declspec(dllexport) void WINAPI StopMmtsRecording(DWORD sessionId);
 extern "C" __declspec(dllexport) BOOL WINAPI GetMmtsRecordingStatus(DWORD sessionId, DWORD* actualMode, BOOL* failed, BOOL* fallbackUsed);
 ```
 
-録画セッション中は復号済み TLV/MMTS と raw shadow を並行保存します。復号できないパケットを検出した場合は raw fallback として、停止時に raw shadow を本ファイルへ昇格します。
+録画セッション中は単一の TLV/MMTS ファイルへ保存します。復号できるパケットは復号済みで書き込み、復号できないパケットは元の TLV パケットのまま書き込みを継続します。`fallbackUsed` は未復号のまま残したパケットがあった場合に true になります。
 
 #### Mirakurunでの動作
 PT4Kで動作する場合、チャンネル再生まで15～20秒かかるため、Mirakurunのtimeout(20秒)を超える場合があります。

@@ -12,9 +12,7 @@ namespace {
 struct Session {
     uint32_t id = 0;
     std::filesystem::path path;
-    std::filesystem::path rawPath;
     std::ofstream decodedStream;
-    std::ofstream rawStream;
     bool failed = false;
     bool fallbackUsed = false;
     bool stopped = false;
@@ -36,18 +34,6 @@ uint32_t AllocateSessionId()
         }
     }
     return 0;
-}
-
-std::filesystem::path MakeRawPath(const std::filesystem::path& path)
-{
-    std::filesystem::path raw = path;
-    std::wstring ext = raw.extension().wstring();
-    if (ext.empty()) {
-        raw += L".raw";
-    } else {
-        raw.replace_extension(L".raw" + ext);
-    }
-    return raw;
 }
 
 bool Exists(const std::filesystem::path& path)
@@ -85,19 +71,6 @@ void CloseStream(std::ofstream& stream)
 void FinishSession(Session& session)
 {
     CloseStream(session.decodedStream);
-    CloseStream(session.rawStream);
-
-    std::error_code ec;
-    if (session.fallbackUsed) {
-        std::filesystem::remove(session.path, ec);
-        ec.clear();
-        std::filesystem::rename(session.rawPath, session.path, ec);
-        if (ec) {
-            session.failed = true;
-        }
-    } else {
-        std::filesystem::remove(session.rawPath, ec);
-    }
     session.stopped = true;
 }
 
@@ -112,11 +85,10 @@ bool Start(const wchar_t* path, bool overwrite, uint32_t* sessionId)
     std::lock_guard<std::mutex> lock(g_mutex);
 
     std::filesystem::path savePath(path);
-    std::filesystem::path rawPath = MakeRawPath(savePath);
-    if (!PrepareParent(savePath) || !PrepareParent(rawPath)) {
+    if (!PrepareParent(savePath)) {
         return false;
     }
-    if (!overwrite && (Exists(savePath) || Exists(rawPath))) {
+    if (!overwrite && Exists(savePath)) {
         return false;
     }
 
@@ -131,20 +103,13 @@ bool Start(const wchar_t* path, bool overwrite, uint32_t* sessionId)
         if (ec) {
             return false;
         }
-        ec.clear();
-        std::filesystem::remove(rawPath, ec);
-        if (ec) {
-            return false;
-        }
     }
 
     auto session = std::make_unique<Session>();
     session->id = id;
     session->path = savePath;
-    session->rawPath = rawPath;
     session->decodedStream.open(savePath, std::ios::binary);
-    session->rawStream.open(rawPath, std::ios::binary);
-    if (!session->decodedStream.is_open() || !session->rawStream.is_open()) {
+    if (!session->decodedStream.is_open()) {
         return false;
     }
 
@@ -191,22 +156,6 @@ bool GetStatus(uint32_t sessionId, uint32_t* actualMode, bool* failed, bool* fal
     return true;
 }
 
-void WriteRaw(const uint8_t* data, size_t size)
-{
-    if (data == nullptr || size == 0) {
-        return;
-    }
-
-    std::lock_guard<std::mutex> lock(g_mutex);
-    for (auto& item : g_sessions) {
-        Session& session = *item.second;
-        session.rawStream.write(reinterpret_cast<const char*>(data), static_cast<std::streamsize>(size));
-        if (!session.rawStream) {
-            MarkSessionFailed(session);
-        }
-    }
-}
-
 void WriteDecoded(const uint8_t* data, size_t size)
 {
     if (data == nullptr || size == 0) {
@@ -216,9 +165,6 @@ void WriteDecoded(const uint8_t* data, size_t size)
     std::lock_guard<std::mutex> lock(g_mutex);
     for (auto& item : g_sessions) {
         Session& session = *item.second;
-        if (session.fallbackUsed) {
-            continue;
-        }
         session.decodedStream.write(reinterpret_cast<const char*>(data), static_cast<std::streamsize>(size));
         if (!session.decodedStream) {
             MarkSessionFailed(session);
