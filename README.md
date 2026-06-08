@@ -7,7 +7,7 @@ MMTSから復号化およびMPEG-2 TSへの変換を行います。
 dantto4k.exeと同じフォルダにdantto4k.iniがある場合、その設定を読み込みます。
 ```
 Usage:
-  dantto4k [OPTION...] input output ('-' for stdin/stdout)
+  dantto4k [OPTION...] input [output] ('-' for stdin/stdout)
 
       --listSmartCardReader     List available smart card readers
       --casProxyServer arg      Specify the address of a CasProxyServer
@@ -17,6 +17,7 @@ Usage:
       --disableADTSConversion   Disable ADTS conversion
       --decode-mmts             Output ACAS-decrypted MMT/TLV instead of MPEG-2 TS
       --write-mmtsmap           Write an .mmtsmap sidecar for --decode-mmts output
+      --write-mmtsmap-only      Scan input and write only an .mmtsmap sidecar
       --mmtsmap arg             Specify .mmtsmap output path
       --no-progress             Disable progress display
       --no-stats                Disable packet statistics
@@ -41,6 +42,18 @@ dantto4k --decode-mmts --write-mmtsmap input.mmts output.mmts
 
 ```
 dantto4k --decode-mmts --mmtsmap output.mmtsmap input.mmts output.mmts
+```
+
+既存の MMTS/TLV から、メディアを再出力せず `.mmtsmap` だけ作成する場合は `--write-mmtsmap-only` を指定します。既定では `input.mmtsmap` に出力します。
+
+```
+dantto4k --write-mmtsmap-only input.mmts
+```
+
+出力先を明示する場合は `--mmtsmap` を指定します。
+
+```
+dantto4k --write-mmtsmap-only --mmtsmap output.mmtsmap input.mmts
 ```
 
 ### BonDriver_dantto4k.dll

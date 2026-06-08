@@ -32,6 +32,7 @@ struct Args {
     bool noProgress{false};
     bool noStats{false};
     bool writeMmtsMap{false};
+    bool writeMmtsMapOnly{false};
     std::string mmtsMapPath;
 };
 
@@ -56,13 +57,14 @@ Args parseArguments(int argc, char* argv[]) {
             ("disableADTSConversion", "Disable ADTS conversion", cxxopts::value<bool>()->default_value("false"))
             ("decode-mmts", "Output ACAS-decrypted MMT/TLV instead of MPEG-2 TS", cxxopts::value<bool>()->default_value("false"))
             ("write-mmtsmap", "Write an .mmtsmap sidecar for --decode-mmts output", cxxopts::value<bool>()->default_value("false"))
+            ("write-mmtsmap-only", "Scan input and write only an .mmtsmap sidecar", cxxopts::value<bool>()->default_value("false"))
             ("mmtsmap", "Specify .mmtsmap output path", cxxopts::value<std::string>())
             ("no-progress", "Disable progress display", cxxopts::value<bool>()->default_value("false"))
             ("no-stats", "Disable packet statistics", cxxopts::value<bool>()->default_value("false"))
             ("help", "Show help");
 
         options.parse_positional({ "input", "output" });
-        options.positional_help("input output ('-' for stdin/stdout)");
+        options.positional_help("input [output] ('-' for stdin/stdout)");
         auto result = options.parse(argc, argv);
 
         if (result.count("help")) {
@@ -70,13 +72,17 @@ Args parseArguments(int argc, char* argv[]) {
             std::exit(0);
         }
 
-        if (!result.count("listSmartCardReader") && (!result.count("input") || !result.count("output"))) {
+        const bool writeMmtsMapOnly = result["write-mmtsmap-only"].count() &&
+            result["write-mmtsmap-only"].as<bool>();
+        if (!result.count("listSmartCardReader") &&
+            (!result.count("input") || (!writeMmtsMapOnly && !result.count("output")))) {
             std::cout << options.help() << std::endl;
             std::exit(1);
         }
 
         args.input = result["input"].as<std::string>();
         args.output = result["output"].as<std::string>();
+        args.writeMmtsMapOnly = writeMmtsMapOnly;
 
         if (result["casProxyServer"].count()) {
             std::string casProxyServer = result["casProxyServer"].as<std::string>();
@@ -104,12 +110,12 @@ Args parseArguments(int argc, char* argv[]) {
 #endif
 
         if (!args.listSmartCardReader) {
-            if (!result.count("input") || !result.count("output")) {
-                std::cerr << "input and output arguments are required" << std::endl;
+            if (!result.count("input") || (!args.writeMmtsMapOnly && !result.count("output"))) {
+                std::cerr << (args.writeMmtsMapOnly ? "input argument is required" : "input and output arguments are required") << std::endl;
                 std::exit(1);
             }
 
-            if (args.input != "-" && args.input == args.output) {
+            if (!args.writeMmtsMapOnly && args.input != "-" && args.input == args.output) {
                 std::cerr << "Input and output paths cannot be the same" << std::endl;
                 std::exit(1);
             }
@@ -140,16 +146,24 @@ Args parseArguments(int argc, char* argv[]) {
             args.noProgress = true;
             args.noStats = true;
         }
+        if (args.writeMmtsMapOnly) {
+            args.writeMmtsMap = true;
+            args.decodeMmts = true;
+        }
         if (args.writeMmtsMap && !args.decodeMmts) {
             std::cerr << "--write-mmtsmap requires --decode-mmts" << std::endl;
             std::exit(1);
         }
-        if (args.writeMmtsMap && args.output == "-") {
+        if (args.writeMmtsMapOnly && args.input == "-") {
+            std::cerr << "--write-mmtsmap-only cannot be used with stdin input" << std::endl;
+            std::exit(1);
+        }
+        if (args.writeMmtsMap && !args.writeMmtsMapOnly && args.output == "-") {
             std::cerr << "--write-mmtsmap cannot be used with stdout output" << std::endl;
             std::exit(1);
         }
         if (args.writeMmtsMap && args.mmtsMapPath.empty()) {
-            args.mmtsMapPath = args.output + "map";
+            args.mmtsMapPath = (args.writeMmtsMapOnly ? args.input : args.output) + "map";
         }
     }
     catch (const cxxopts::exceptions::exception& e) {
@@ -278,9 +292,12 @@ int main(int argc, char* argv[]) {
     }
     ProgressReporter progressReporter(fileSize, !args.noProgress);
 
-    std::ostream* outputStream;
+    std::ostream* outputStream = nullptr;
     std::unique_ptr<std::ofstream> outputFs;
-    if (useStdout) {
+    if (args.writeMmtsMapOnly) {
+        outputStream = nullptr;
+    }
+    else if (useStdout) {
         outputStream = &std::cout;
     }
     else {
@@ -305,12 +322,17 @@ int main(int argc, char* argv[]) {
                 std::cerr << "Failed to open MMTS map: " << args.mmtsMapPath << std::endl;
                 return 1;
             }
+            if (args.writeMmtsMapOnly) {
+                mapWriter.setSourceSize(fileSize);
+            }
         }
         demuxer.setDecodedDumpCallback([&](const uint8_t* data, size_t size) {
             if (mapWriter.isOpen()) {
                 mapWriter.noteOutputPacket(size);
             }
-            outputStream->write(reinterpret_cast<const char*>(data), static_cast<std::streamsize>(size));
+            if (!args.writeMmtsMapOnly && outputStream) {
+                outputStream->write(reinterpret_cast<const char*>(data), static_cast<std::streamsize>(size));
+            }
         });
         demuxer.setDecodedDumpErrorCallback([&]() {
             decodeFailedPacketCount++;
