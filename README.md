@@ -16,6 +16,8 @@ Usage:
       --customWinscardDLL arg   Specify the path to a winscard.dll
       --disableADTSConversion   Disable ADTS conversion
       --decode-mmts             Output ACAS-decrypted MMT/TLV instead of MPEG-2 TS
+      --write-mmtsmap           Write an .mmtsmap sidecar for --decode-mmts output
+      --mmtsmap arg             Specify .mmtsmap output path
       --no-progress             Disable progress display
       --no-stats                Disable packet statistics
       --help                    Show help
@@ -28,6 +30,18 @@ dantto4k --decode-mmts input.mmts output.mmts
 ```
 
 復号できないパケットは元の TLV パケットのまま出力を継続し、終了時に復号できなかったパケット数を stderr に表示します。
+
+復号済み MMTS/TLV と同時にトラック構成やおおまかなシーク位置を記録する `.mmtsmap` を作成する場合は `--write-mmtsmap` を指定します。既定では `output.mmtsmap` に出力します。
+
+```
+dantto4k --decode-mmts --write-mmtsmap input.mmts output.mmts
+```
+
+出力先を明示する場合は `--mmtsmap` を指定します。
+
+```
+dantto4k --decode-mmts --mmtsmap output.mmtsmap input.mmts output.mmts
+```
 
 ### BonDriver_dantto4k.dll
 リアルタイムで復号化とMPEG-2 TSへの変換を行うBonDriverです。
@@ -43,6 +57,8 @@ extern "C" __declspec(dllexport) BOOL WINAPI GetMmtsRecordingStatus(DWORD sessio
 ```
 
 録画セッション中は単一の TLV/MMTS ファイルへ保存します。復号できるパケットは復号済みで書き込み、復号できないパケットは元の TLV パケットのまま書き込みを継続します。`fallbackUsed` は未復号のまま残したパケットがあった場合に true になります。
+
+録画保存時は、保存先が `record.mmts` の場合に `record.mmtsmap` も同時に作成します。`.mmtsmap` にはトラック構成、MPT 変化点、RAP、約 5 秒間隔のシーク候補が記録されます。
 
 #### Mirakurunでの動作
 PT4Kで動作する場合、チャンネル再生まで15～20秒かかるため、Mirakurunのtimeout(20秒)を超える場合があります。

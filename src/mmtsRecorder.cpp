@@ -1,5 +1,6 @@
 #include "mmtsRecorder.h"
 
+#include "mmtsMapWriter.h"
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -12,7 +13,9 @@ namespace {
 struct Session {
     uint32_t id = 0;
     std::filesystem::path path;
+    std::filesystem::path mapPath;
     std::ofstream decodedStream;
+    MmtTlv::MmtsMapWriter mapWriter;
     bool failed = false;
     bool fallbackUsed = false;
     bool stopped = false;
@@ -71,6 +74,9 @@ void CloseStream(std::ofstream& stream)
 void FinishSession(Session& session)
 {
     CloseStream(session.decodedStream);
+    if (session.mapWriter.isOpen()) {
+        session.mapWriter.close();
+    }
     session.stopped = true;
 }
 
@@ -85,10 +91,15 @@ bool Start(const wchar_t* path, bool overwrite, uint32_t* sessionId)
     std::lock_guard<std::mutex> lock(g_mutex);
 
     std::filesystem::path savePath(path);
+    std::filesystem::path mapPath = savePath;
+    mapPath += L"map";
     if (!PrepareParent(savePath)) {
         return false;
     }
     if (!overwrite && Exists(savePath)) {
+        return false;
+    }
+    if (!overwrite && Exists(mapPath)) {
         return false;
     }
 
@@ -103,13 +114,22 @@ bool Start(const wchar_t* path, bool overwrite, uint32_t* sessionId)
         if (ec) {
             return false;
         }
+        std::filesystem::remove(mapPath, ec);
+        if (ec) {
+            return false;
+        }
     }
 
     auto session = std::make_unique<Session>();
     session->id = id;
     session->path = savePath;
+    session->mapPath = mapPath;
     session->decodedStream.open(savePath, std::ios::binary);
     if (!session->decodedStream.is_open()) {
+        return false;
+    }
+    if (!session->mapWriter.open(mapPath)) {
+        CloseStream(session->decodedStream);
         return false;
     }
 
@@ -165,6 +185,7 @@ void WriteDecoded(const uint8_t* data, size_t size)
     std::lock_guard<std::mutex> lock(g_mutex);
     for (auto& item : g_sessions) {
         Session& session = *item.second;
+        session.mapWriter.noteOutputPacket(size);
         session.decodedStream.write(reinterpret_cast<const char*>(data), static_cast<std::streamsize>(size));
         if (!session.decodedStream) {
             MarkSessionFailed(session);
@@ -177,6 +198,38 @@ void MarkDecodeFailure()
     std::lock_guard<std::mutex> lock(g_mutex);
     for (auto& item : g_sessions) {
         item.second->fallbackUsed = true;
+    }
+}
+
+void OnVideoData(const MmtTlv::MmtStream& stream, const MmtTlv::MfuData& mfu)
+{
+    std::lock_guard<std::mutex> lock(g_mutex);
+    for (auto& item : g_sessions) {
+        item.second->mapWriter.onVideoData(stream, mfu);
+    }
+}
+
+void OnAudioData(const MmtTlv::MmtStream& stream, const MmtTlv::MfuData& mfu)
+{
+    std::lock_guard<std::mutex> lock(g_mutex);
+    for (auto& item : g_sessions) {
+        item.second->mapWriter.onAudioData(stream, mfu);
+    }
+}
+
+void OnSubtitleData(const MmtTlv::MmtStream& stream, const MmtTlv::MfuData& mfu)
+{
+    std::lock_guard<std::mutex> lock(g_mutex);
+    for (auto& item : g_sessions) {
+        item.second->mapWriter.onSubtitleData(stream, mfu);
+    }
+}
+
+void OnMpt(const MmtTlv::Mpt& mpt)
+{
+    std::lock_guard<std::mutex> lock(g_mutex);
+    for (auto& item : g_sessions) {
+        item.second->mapWriter.onMpt(mpt);
     }
 }
 

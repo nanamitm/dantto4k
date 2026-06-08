@@ -2,6 +2,8 @@
 #include "bonDriverContext.h"
 #include "acasHandler.h"
 #include "mmtsRecorder.h"
+#include "demuxerTeeHandler.h"
+#include <memory>
 
 BonDriverContext g_bonDriverContext;
 
@@ -9,6 +11,32 @@ namespace {
 
 HINSTANCE hModule = nullptr;
 uint32_t legacyMmtsSessionId = 0;
+std::unique_ptr<MmtTlv::DemuxerTeeHandler> demuxerTeeHandler;
+
+class RecordingMapHandler : public MmtTlv::DemuxerHandler {
+public:
+    void onVideoData(const MmtTlv::MmtStream& stream, const MmtTlv::MfuData& mfu) override
+    {
+        MmtsRecorder::OnVideoData(stream, mfu);
+    }
+
+    void onAudioData(const MmtTlv::MmtStream& stream, const MmtTlv::MfuData& mfu) override
+    {
+        MmtsRecorder::OnAudioData(stream, mfu);
+    }
+
+    void onSubtitleData(const MmtTlv::MmtStream& stream, const MmtTlv::MfuData& mfu) override
+    {
+        MmtsRecorder::OnSubtitleData(stream, mfu);
+    }
+
+    void onMpt(const MmtTlv::Mpt& mpt) override
+    {
+        MmtsRecorder::OnMpt(mpt);
+    }
+};
+
+RecordingMapHandler recordingMapHandler;
 
 std::string getConfigFilePath(void* hModule) {
     char g_IniFilePath[_MAX_PATH];
@@ -77,7 +105,9 @@ extern "C" __declspec(dllexport) IBonDriver* CreateBonDriver() {
             g_bonDriverContext.remuxOutput.insert(g_bonDriverContext.remuxOutput.end(), data, data + size);
         }
     });
-    g_bonDriverContext.demuxer.setDemuxerHandler(g_bonDriverContext.handler);
+    demuxerTeeHandler = std::make_unique<MmtTlv::DemuxerTeeHandler>(
+        g_bonDriverContext.handler, recordingMapHandler);
+    g_bonDriverContext.demuxer.setDemuxerHandler(*demuxerTeeHandler);
     installRecordingCallbacks();
 
     try {

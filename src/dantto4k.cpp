@@ -5,6 +5,7 @@
 #include "config.h"
 #include "mmtTlvDemuxer.h"
 #include "demuxerHandler.h"
+#include "mmtsMapWriter.h"
 #include "aribUtil.h"
 #include "casProxyClient.h"
 #include "acasHandler.h"
@@ -30,6 +31,8 @@ struct Args {
     bool listSmartCardReader{false};
     bool noProgress{false};
     bool noStats{false};
+    bool writeMmtsMap{false};
+    std::string mmtsMapPath;
 };
 
 class NullDemuxerHandler : public MmtTlv::DemuxerHandler {
@@ -52,6 +55,8 @@ Args parseArguments(int argc, char* argv[]) {
 #endif
             ("disableADTSConversion", "Disable ADTS conversion", cxxopts::value<bool>()->default_value("false"))
             ("decode-mmts", "Output ACAS-decrypted MMT/TLV instead of MPEG-2 TS", cxxopts::value<bool>()->default_value("false"))
+            ("write-mmtsmap", "Write an .mmtsmap sidecar for --decode-mmts output", cxxopts::value<bool>()->default_value("false"))
+            ("mmtsmap", "Specify .mmtsmap output path", cxxopts::value<std::string>())
             ("no-progress", "Disable progress display", cxxopts::value<bool>()->default_value("false"))
             ("no-stats", "Disable packet statistics", cxxopts::value<bool>()->default_value("false"))
             ("help", "Show help");
@@ -60,7 +65,12 @@ Args parseArguments(int argc, char* argv[]) {
         options.positional_help("input output ('-' for stdin/stdout)");
         auto result = options.parse(argc, argv);
 
-        if (result.count("help") || (!result.count("listSmartCardReader") && (!result.count("input") || !result.count("output")))) {
+        if (result.count("help")) {
+            std::cout << options.help() << std::endl;
+            std::exit(0);
+        }
+
+        if (!result.count("listSmartCardReader") && (!result.count("input") || !result.count("output"))) {
             std::cout << options.help() << std::endl;
             std::exit(1);
         }
@@ -111,6 +121,13 @@ Args parseArguments(int argc, char* argv[]) {
         if (result["decode-mmts"].count()) {
             args.decodeMmts = result["decode-mmts"].as<bool>();
         }
+        if (result["write-mmtsmap"].count()) {
+            args.writeMmtsMap = result["write-mmtsmap"].as<bool>();
+        }
+        if (result["mmtsmap"].count()) {
+            args.mmtsMapPath = result["mmtsmap"].as<std::string>();
+            args.writeMmtsMap = true;
+        }
         if (result["no-progress"].count()) {
             args.noProgress = result["no-progress"].as<bool>();
         }
@@ -122,6 +139,17 @@ Args parseArguments(int argc, char* argv[]) {
         if (args.input == "-" || args.output == "-") {
             args.noProgress = true;
             args.noStats = true;
+        }
+        if (args.writeMmtsMap && !args.decodeMmts) {
+            std::cerr << "--write-mmtsmap requires --decode-mmts" << std::endl;
+            std::exit(1);
+        }
+        if (args.writeMmtsMap && args.output == "-") {
+            std::cerr << "--write-mmtsmap cannot be used with stdout output" << std::endl;
+            std::exit(1);
+        }
+        if (args.writeMmtsMap && args.mmtsMapPath.empty()) {
+            args.mmtsMapPath = args.output + "map";
         }
     }
     catch (const cxxopts::exceptions::exception& e) {
@@ -267,17 +295,31 @@ int main(int argc, char* argv[]) {
     MmtTlv::MmtTlvDemuxer demuxer;
     RemuxerHandler handler(demuxer);
     NullDemuxerHandler nullHandler;
+    MmtTlv::MmtsMapWriter mapWriter;
     std::unique_ptr<BufferedOutput> bufferedOutput;
     uint64_t decodeFailedPacketCount = 0;
 
     if (args.decodeMmts) {
+        if (args.writeMmtsMap) {
+            if (!mapWriter.open(args.mmtsMapPath)) {
+                std::cerr << "Failed to open MMTS map: " << args.mmtsMapPath << std::endl;
+                return 1;
+            }
+        }
         demuxer.setDecodedDumpCallback([&](const uint8_t* data, size_t size) {
+            if (mapWriter.isOpen()) {
+                mapWriter.noteOutputPacket(size);
+            }
             outputStream->write(reinterpret_cast<const char*>(data), static_cast<std::streamsize>(size));
         });
         demuxer.setDecodedDumpErrorCallback([&]() {
             decodeFailedPacketCount++;
         });
-        demuxer.setDemuxerHandler(nullHandler);
+        if (mapWriter.isOpen()) {
+            demuxer.setDemuxerHandler(mapWriter);
+        } else {
+            demuxer.setDemuxerHandler(nullHandler);
+        }
     }
     else {
         if (useStdout) {
@@ -358,6 +400,10 @@ int main(int argc, char* argv[]) {
 
     if (args.decodeMmts) {
         std::cerr << "MMTS decode failed packets: " << decodeFailedPacketCount << std::endl;
+    }
+    if (mapWriter.isOpen()) {
+        mapWriter.close();
+        std::cerr << "MMTS map written: " << args.mmtsMapPath << std::endl;
     }
 
     return 0;

@@ -192,6 +192,7 @@
     <ClCompile Include="../src/contentCopyControlDescriptor.cpp" />
     <ClCompile Include="../src/dataTransmissionMessage.cpp" />
     <ClCompile Include="../src/dataUnit.cpp" />
+    <ClCompile Include="../src/demuxerTeeHandler.cpp" />
     <ClCompile Include="../src/dllmain.cpp" />
     <ClCompile Include="../src/ecm.cpp" />
     <ClCompile Include="../src/acasHandler.cpp" />
@@ -205,6 +206,7 @@
     <ClCompile Include="../src/mhServiceListDescriptor.cpp" />
     <ClCompile Include="../src/mhSiParameterDescriptor.cpp" />
     <ClCompile Include="../src/mmtsRecorder.cpp" />
+    <ClCompile Include="../src/mmtsMapWriter.cpp" />
     <ClCompile Include="../src/mmtDescriptorFactory.cpp" />
     <ClCompile Include="../src/mmtTableFactory.cpp" />
     <ClCompile Include="../src/multimediaServiceInformationDescriptor.cpp" />
@@ -301,6 +303,7 @@
     <ClInclude Include="../src/contentCopyControlDescriptor.h" />
     <ClInclude Include="../src/dataTransmissionMessage.h" />
     <ClInclude Include="../src/dataUnit.h" />
+    <ClInclude Include="../src/demuxerTeeHandler.h" />
     <ClInclude Include="../src/descriptorConverter.h" />
     <ClInclude Include="../src/ecm.h" />
     <ClInclude Include="../src/acasHandler.h" />
@@ -315,6 +318,7 @@
     <ClInclude Include="../src/mhServiceListDescriptor.h" />
     <ClInclude Include="../src/mhSiParameterDescriptor.h" />
     <ClInclude Include="../src/mmtsRecorder.h" />
+    <ClInclude Include="../src/mmtsMapWriter.h" />
     <ClInclude Include="../src/mmtDescriptorFactory.h" />
     <ClInclude Include="../src/mmtFragment.h" />
     <ClInclude Include="../src/mmtTableFactory.h" />
