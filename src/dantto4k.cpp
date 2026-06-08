@@ -32,6 +32,7 @@ struct Args {
     bool noProgress{false};
     bool noStats{false};
     bool writeMmtsMap{false};
+    bool writeMmtsMapText{false};
     bool writeMmtsMapOnly{false};
     std::string mmtsMapPath;
 };
@@ -56,7 +57,8 @@ Args parseArguments(int argc, char* argv[]) {
 #endif
             ("disableADTSConversion", "Disable ADTS conversion", cxxopts::value<bool>()->default_value("false"))
             ("decode-mmts", "Output ACAS-decrypted MMT/TLV instead of MPEG-2 TS", cxxopts::value<bool>()->default_value("false"))
-            ("write-mmtsmap", "Write an .mmtsmap sidecar for --decode-mmts output", cxxopts::value<bool>()->default_value("false"))
+            ("write-mmtsmap", "Write a binary .mmtsmap sidecar for --decode-mmts output", cxxopts::value<bool>()->default_value("false"))
+            ("write-mmtsmap-text", "Write a text .mmtsmap sidecar for --decode-mmts output", cxxopts::value<bool>()->default_value("false"))
             ("write-mmtsmap-only", "Scan input and write only an .mmtsmap sidecar", cxxopts::value<bool>()->default_value("false"))
             ("mmtsmap", "Specify .mmtsmap output path", cxxopts::value<std::string>())
             ("no-progress", "Disable progress display", cxxopts::value<bool>()->default_value("false"))
@@ -129,6 +131,11 @@ Args parseArguments(int argc, char* argv[]) {
         }
         if (result["write-mmtsmap"].count()) {
             args.writeMmtsMap = result["write-mmtsmap"].as<bool>();
+        }
+        if (result["write-mmtsmap-text"].count()) {
+            args.writeMmtsMapText = result["write-mmtsmap-text"].as<bool>();
+            if (args.writeMmtsMapText)
+                args.writeMmtsMap = true;
         }
         if (result["mmtsmap"].count()) {
             args.mmtsMapPath = result["mmtsmap"].as<std::string>();
@@ -318,7 +325,10 @@ int main(int argc, char* argv[]) {
 
     if (args.decodeMmts) {
         if (args.writeMmtsMap) {
-            if (!mapWriter.open(args.mmtsMapPath)) {
+            const auto mapFormat = args.writeMmtsMapText
+                ? MmtTlv::MmtsMapWriter::Format::Text
+                : MmtTlv::MmtsMapWriter::Format::Binary;
+            if (!mapWriter.open(args.mmtsMapPath, mapFormat)) {
                 std::cerr << "Failed to open MMTS map: " << args.mmtsMapPath << std::endl;
                 return 1;
             }

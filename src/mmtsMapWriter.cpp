@@ -8,6 +8,7 @@
 #include "mpuProcessorBase.h"
 #include <algorithm>
 #include <cstdio>
+#include <map>
 #include <sstream>
 
 namespace MmtTlv {
@@ -34,7 +35,17 @@ std::string MmtsMapWriter::TrackInfo::line() const
     return oss.str();
 }
 
-bool MmtsMapWriter::open(const std::filesystem::path& mapPath)
+namespace {
+
+template <typename T>
+void writePod(std::ofstream& ofs, T value)
+{
+    ofs.write(reinterpret_cast<const char*>(&value), sizeof(value));
+}
+
+} // namespace
+
+bool MmtsMapWriter::open(const std::filesystem::path& mapPath, Format mapFormat)
 {
     close();
     if (mapPath.empty())
@@ -46,6 +57,7 @@ bool MmtsMapWriter::open(const std::filesystem::path& mapPath)
     test.close();
 
     path = mapPath;
+    format = mapFormat;
     sourceSize = 0;
     outputOffset = 0;
     currentPacketOffset = 0;
@@ -71,21 +83,10 @@ void MmtsMapWriter::close()
 
     std::ofstream ofs(path, std::ios::binary);
     if (ofs) {
-        ofs << "MMTSMAP 1\n";
-        ofs << "source_size=" << sourceSize << "\n";
-        ofs << "duration_ms=" << ((firstVideoPtsMs >= 0 && lastVideoPtsMs >= firstVideoPtsMs)
-            ? (lastVideoPtsMs - firstVideoPtsMs) : 0) << "\n";
-        ofs << "first_video_pts_ms=" << firstVideoPtsMs << "\n";
-        ofs << "last_video_pts_ms=" << lastVideoPtsMs << "\n";
-
-        for (const auto& [_, track] : tracksByKey)
-            ofs << track.line() << "\n";
-        for (const auto& line : mptChanges)
-            ofs << line << "\n";
-        for (const auto& line : rapPoints)
-            ofs << line << "\n";
-        for (const auto& line : seekPoints)
-            ofs << line << "\n";
+        if (format == Format::Text)
+            writeText(ofs);
+        else
+            writeBinary(ofs);
     }
 
     path.clear();
@@ -139,31 +140,125 @@ std::string MmtsMapWriter::describeTracks(const std::vector<TrackInfo>& tracks, 
     return any ? oss.str() : "-";
 }
 
+uint8_t MmtsMapWriter::trackTypeCode(const std::string& type)
+{
+    if (type == "video")
+        return 1;
+    if (type == "audio")
+        return 2;
+    if (type == "subtitle")
+        return 3;
+    return 0;
+}
+
 void MmtsMapWriter::rememberTrack(const TrackInfo& track)
 {
     tracksByKey[track.key()] = track;
 }
 
-void MmtsMapWriter::rememberTimedPoint(std::vector<std::string>& lines, const char* kind,
+void MmtsMapWriter::rememberTimedPoint(std::vector<TimedPoint>& points, char kind,
                                        long long timeMs, uint64_t offset, long long minGapMs)
 {
     if (timeMs < 0)
         return;
-    if (lines.size() > 0) {
-        long long& last = (kind[0] == 'r') ? lastRapPointMs : lastSeekPointMs;
+    if (points.size() > 0) {
+        long long& last = (kind == 'r') ? lastRapPointMs : lastSeekPointMs;
         if (last >= 0 && timeMs < last + minGapMs)
             return;
         last = timeMs;
     } else {
-        if (kind[0] == 'r')
+        if (kind == 'r')
             lastRapPointMs = timeMs;
         else
             lastSeekPointMs = timeMs;
     }
 
-    std::ostringstream oss;
-    oss << kind << " time_ms=" << timeMs << " offset=" << offset;
-    lines.push_back(oss.str());
+    points.push_back(TimedPoint{ timeMs, offset });
+}
+
+void MmtsMapWriter::writeText(std::ofstream& ofs) const
+{
+    ofs << "MMTSMAP 1\n";
+    ofs << "source_size=" << sourceSize << "\n";
+    ofs << "duration_ms=" << ((firstVideoPtsMs >= 0 && lastVideoPtsMs >= firstVideoPtsMs)
+        ? (lastVideoPtsMs - firstVideoPtsMs) : 0) << "\n";
+    ofs << "first_video_pts_ms=" << firstVideoPtsMs << "\n";
+    ofs << "last_video_pts_ms=" << lastVideoPtsMs << "\n";
+
+    for (const auto& [_, track] : tracksByKey)
+        ofs << track.line() << "\n";
+    for (const auto& change : mptChanges) {
+        ofs << "mpt time_ms=" << change.timeMs
+            << " offset=" << change.offset
+            << " audio=" << describeTracks(change.tracks, "audio")
+            << " subtitle=" << describeTracks(change.tracks, "subtitle")
+            << "\n";
+    }
+    for (const auto& point : rapPoints)
+        ofs << "rap time_ms=" << point.timeMs << " offset=" << point.offset << "\n";
+    for (const auto& point : seekPoints)
+        ofs << "seek time_ms=" << point.timeMs << " offset=" << point.offset << "\n";
+}
+
+void MmtsMapWriter::writeBinary(std::ofstream& ofs) const
+{
+    struct BinaryTrack {
+        uint8_t type;
+        uint8_t flags;
+        uint16_t reserved;
+        int32_t streamIndex;
+        uint16_t packetId;
+        int16_t componentTag;
+        uint32_t samplingRate;
+        uint32_t reserved2;
+    };
+
+    const char magic[8] = { 'M', 'M', 'T', 'S', 'M', 'A', 'P', '2' };
+    ofs.write(magic, sizeof(magic));
+    writePod<uint32_t>(ofs, 2);
+    writePod<uint32_t>(ofs, 0);
+    writePod<uint64_t>(ofs, sourceSize);
+    writePod<int64_t>(ofs, (firstVideoPtsMs >= 0 && lastVideoPtsMs >= firstVideoPtsMs)
+        ? (lastVideoPtsMs - firstVideoPtsMs) : 0);
+    writePod<int64_t>(ofs, firstVideoPtsMs);
+    writePod<int64_t>(ofs, lastVideoPtsMs);
+    writePod<uint32_t>(ofs, static_cast<uint32_t>(tracksByKey.size()));
+    writePod<uint32_t>(ofs, static_cast<uint32_t>(mptChanges.size()));
+    writePod<uint32_t>(ofs, static_cast<uint32_t>(rapPoints.size()));
+    writePod<uint32_t>(ofs, static_cast<uint32_t>(seekPoints.size()));
+
+    std::map<std::string, uint32_t> trackIndices;
+    uint32_t index = 0;
+    for (const auto& [key, track] : tracksByKey) {
+        trackIndices[key] = index++;
+        BinaryTrack rec{};
+        rec.type = trackTypeCode(track.type);
+        rec.flags = track.latm ? 1 : 0;
+        rec.streamIndex = static_cast<int32_t>(track.streamIndex);
+        rec.packetId = track.packetId;
+        rec.componentTag = static_cast<int16_t>(track.componentTag);
+        rec.samplingRate = track.samplingRate;
+        ofs.write(reinterpret_cast<const char*>(&rec), sizeof(rec));
+    }
+
+    for (const auto& change : mptChanges) {
+        writePod<int64_t>(ofs, change.timeMs);
+        writePod<uint64_t>(ofs, change.offset);
+        writePod<uint32_t>(ofs, static_cast<uint32_t>(change.tracks.size()));
+        for (const auto& track : change.tracks) {
+            auto it = trackIndices.find(track.key());
+            writePod<uint32_t>(ofs, it != trackIndices.end() ? it->second : UINT32_MAX);
+        }
+    }
+
+    auto writePoint = [&ofs](const TimedPoint& point) {
+        writePod<int64_t>(ofs, point.timeMs);
+        writePod<uint64_t>(ofs, point.offset);
+    };
+    for (const auto& point : rapPoints)
+        writePoint(point);
+    for (const auto& point : seekPoints)
+        writePoint(point);
 }
 
 void MmtsMapWriter::onVideoData(const MmtStream& stream, const MfuData& mfu)
@@ -179,9 +274,9 @@ void MmtsMapWriter::onVideoData(const MmtStream& stream, const MfuData& mfu)
             lastVideoPtsMs = ptsMs;
 
         if (mfu.isLastFragment)
-            rememberTimedPoint(seekPoints, "seek", ptsMs, currentPacketOffset, 5000);
+            rememberTimedPoint(seekPoints, 's', ptsMs, currentPacketOffset, 5000);
         if (mfu.keyframe)
-            rememberTimedPoint(rapPoints, "rap", ptsMs, currentPacketOffset, 500);
+            rememberTimedPoint(rapPoints, 'r', ptsMs, currentPacketOffset, 500);
     }
 
     TrackInfo track;
@@ -284,13 +379,12 @@ void MmtsMapWriter::onMpt(const Mpt& mpt)
         return;
 
     lastMptSignature = signature;
-    std::ostringstream oss;
     const long long timeMs = lastVideoPtsMs >= 0 ? lastVideoPtsMs : firstVideoPtsMs;
-    oss << "mpt time_ms=" << timeMs
-        << " offset=" << currentPacketOffset
-        << " audio=" << describeTracks(tracks, "audio")
-        << " subtitle=" << describeTracks(tracks, "subtitle");
-    mptChanges.push_back(oss.str());
+    MptChange change;
+    change.timeMs = timeMs;
+    change.offset = currentPacketOffset;
+    change.tracks = tracks;
+    mptChanges.push_back(change);
 }
 
 } // namespace MmtTlv

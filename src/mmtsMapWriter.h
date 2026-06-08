@@ -15,7 +15,12 @@ class Mpt;
 
 class MmtsMapWriter : public DemuxerHandler {
 public:
-    bool open(const std::filesystem::path& path);
+    enum class Format {
+        Binary,
+        Text,
+    };
+
+    bool open(const std::filesystem::path& path, Format format = Format::Binary);
     void close();
     bool isOpen() const { return !path.empty(); }
 
@@ -39,16 +44,29 @@ private:
         std::string key() const;
         std::string line() const;
     };
+    struct TimedPoint {
+        long long timeMs{-1};
+        uint64_t offset{0};
+    };
+    struct MptChange {
+        long long timeMs{-1};
+        uint64_t offset{0};
+        std::vector<TrackInfo> tracks;
+    };
 
     static long long ptsToMs(uint64_t pts, const MmtStream& stream);
     static std::string signatureOf(const std::vector<TrackInfo>& tracks);
     static std::string describeTracks(const std::vector<TrackInfo>& tracks, const char* type);
+    static uint8_t trackTypeCode(const std::string& type);
 
     void rememberTrack(const TrackInfo& track);
-    void rememberTimedPoint(std::vector<std::string>& lines, const char* kind,
+    void rememberTimedPoint(std::vector<TimedPoint>& points, char kind,
                             long long timeMs, uint64_t offset, long long minGapMs);
+    void writeText(std::ofstream& ofs) const;
+    void writeBinary(std::ofstream& ofs) const;
 
     std::filesystem::path path;
+    Format format{Format::Binary};
     uint64_t sourceSize{0};
     uint64_t outputOffset{0};
     uint64_t currentPacketOffset{0};
@@ -58,9 +76,9 @@ private:
     long long lastRapPointMs{-1};
     std::string lastMptSignature;
     std::map<std::string, TrackInfo> tracksByKey;
-    std::vector<std::string> mptChanges;
-    std::vector<std::string> rapPoints;
-    std::vector<std::string> seekPoints;
+    std::vector<MptChange> mptChanges;
+    std::vector<TimedPoint> rapPoints;
+    std::vector<TimedPoint> seekPoints;
 };
 
 } // namespace MmtTlv
