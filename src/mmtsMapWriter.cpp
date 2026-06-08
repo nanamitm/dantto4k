@@ -15,8 +15,8 @@ namespace MmtTlv {
 std::string MmtsMapWriter::TrackInfo::key() const
 {
     char buf[128];
-    std::snprintf(buf, sizeof(buf), "%s:%d:%04X:%d:%u:%d",
-                  type.c_str(), streamIndex, packetId, componentTag, samplingRate, latm ? 1 : 0);
+    std::snprintf(buf, sizeof(buf), "%s:%d:%04X:%d",
+                  type.c_str(), streamIndex, packetId, componentTag);
     return buf;
 }
 
