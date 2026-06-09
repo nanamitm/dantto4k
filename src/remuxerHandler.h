@@ -76,6 +76,9 @@ public:
 public:
 	using OutputCallback = std::function<void(const uint8_t*, size_t)>;
 	void setOutputCallback(OutputCallback cb);
+	// Subtracts this 90kHz value from every emitted PTS/DTS/PCR, so editors can
+	// rebase per-segment timestamps into one contiguous output timeline.
+	void setPtsOffset(int64_t offset90k) { ptsOffset90k = offset90k; }
 	void clear();
 	uint64_t getAdtsDropCount() const { return adtsDropCount; }
 
@@ -105,6 +108,7 @@ private:
 	uint64_t lastWrittenPcr{};
 	uint64_t lastCaptionManagementDataPts{};
 	uint64_t programStartTime{};
+	int64_t ptsOffset90k{0};
 	inline static const std::vector<uint8_t> ccis = { 0x43, 0x43, 0x49, 0x53, 0x01, 0x3F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, };
 	ts::DuckContext duck;
 

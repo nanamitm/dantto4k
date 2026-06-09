@@ -265,6 +265,10 @@ void RemuxerHandler::writeStream(const MmtTlv::MmtStream& mmtStream, const MmtTl
         if ((mfuData.pts != MmtTlv::NOPTS_VALUE && mfuData.dts != MmtTlv::NOPTS_VALUE) && timeBase.den > 0) {
             tsPts = av_rescale_q(mfuData.pts, timeBase, tsTimeBase);
             tsDts = av_rescale_q(mfuData.dts, timeBase, tsTimeBase);
+            if (ptsOffset90k != 0) {
+                tsPts = tsPts > static_cast<uint64_t>(ptsOffset90k) ? tsPts - ptsOffset90k : 0;
+                tsDts = tsDts > static_cast<uint64_t>(ptsOffset90k) ? tsDts - ptsOffset90k : 0;
+            }
         }
 
         if (mmtStream.getAssetType() == MmtTlv::AssetType::hev1 && tsDts != MmtTlv::NOPTS_VALUE) {
@@ -382,6 +386,8 @@ void RemuxerHandler::writeSubtitle(const MmtTlv::MmtStream& mmtStream, const B24
 
     PESPacket pes;
     uint64_t pts = subtitle.calcPts(programStartTime);
+    if (ptsOffset90k != 0)
+        pts = pts > static_cast<uint64_t>(ptsOffset90k) ? pts - ptsOffset90k : 0;
     subtitleDebugLog("writeSubtitle: tag=" + std::to_string(mmtStream.getComponentTag()) +
         " calcPts=" + std::to_string(pts) +
         " lastPcr=" + std::to_string(lastPcr) +
@@ -1219,4 +1225,5 @@ void RemuxerHandler::clear() {
     lastWrittenPcr = 0;
     lastCaptionManagementDataPts = 0;
     programStartTime = 0;
+    ptsOffset90k = 0;
 }
