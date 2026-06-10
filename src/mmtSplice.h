@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <vector>
 
@@ -33,6 +34,12 @@ struct PacketInfo {
     bool mpu = false;      // payloadType == Mpu and MPU header parsed
     uint32_t mpuSequenceNumber = 0;
     uint8_t mpuFragmentType = 0; // FragmentType raw value
+
+    // Byte offsets (within the packet) of the rewritable sequence fields:
+    // the 4-byte MMTP packet_sequence_number and, for MPU payloads, the
+    // 4-byte mpu_sequence_number. 0 = not present / not parsed.
+    size_t mmtpSequenceOffset = 0;
+    size_t mpuSequenceOffset = 0;
 
     bool signaling = false; // payloadType == ContainsOneOrMoreControlMessage
     uint8_t signalingFragmentationIndicator = 0;
@@ -93,18 +100,24 @@ struct MpuTiming {
 // Rebuilds `mptTable` (raw MPT table bytes, starting at table_id) so that the
 // asset whose location carries `videoPacketId`:
 //  - loses all mpu_timestamp / mpu_extended_timestamp entries with sequence
-//    numbers in [dropSeqMin, dropSeqMax] (the replaced original MPUs), and
-//  - gains entries for `newMpus` (presentation times on the SOURCE timeline).
-// Then every asset's mpu_timestamp entries (including the new ones) are
-// shifted by `shiftUs` microseconds -- used to rebase an edited stream onto a
-// continuous timeline; the extended descriptor only carries relative offsets,
-// so it needs no shift. Other descriptors are byte-identical. Returns
-// std::nullopt when the table cannot be parsed or the asset is not found.
+//    numbers in [dropSeqMin, dropSeqMax] (SOURCE numbering; the replaced
+//    original MPUs), and
+//  - gains entries for `newMpus` (SOURCE MPU numbering and timeline).
+// Then, table-wide (new entries included):
+//  - every asset's mpu_timestamp entries are shifted by `shiftUs`
+//    microseconds (timeline rebase; the extended descriptor only carries
+//    relative offsets, so it needs no time shift), and
+//  - every entry's MPU sequence number is renumbered by the per-pid offsets
+//    in `mpuSeqOffsets` (output = source + offset; pids absent from the map
+//    keep their source numbers).
+// Other descriptors are byte-identical. Returns std::nullopt when the table
+// cannot be parsed or the asset is not found.
 std::optional<std::vector<uint8_t>> patchMptVideoTimestamps(
     const std::vector<uint8_t>& mptTable, uint16_t videoPacketId,
     const std::vector<MpuTiming>& newMpus,
     uint32_t dropSeqMin, uint32_t dropSeqMax,
-    int64_t shiftUs = 0);
+    int64_t shiftUs = 0,
+    const std::map<uint16_t, int64_t>* mpuSeqOffsets = nullptr);
 
 // Shifts the four NTP timestamps of a TLV IPv6 NTP packet (TlvPacketType
 // Ipv6Packet carrying UDP port 123) by `shiftUs` microseconds, updating the

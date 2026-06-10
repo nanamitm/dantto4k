@@ -266,6 +266,7 @@ bool parsePacket(const uint8_t* data, size_t avail, PacketInfo& out)
     out.packetId = be16(p + pos + 2);
     out.deliveryTimestamp = be32(p + pos + 4);
     out.packetSequenceNumber = be32(p + pos + 8);
+    out.mmtpSequenceOffset = 4 + pos + 8;
     pos += 12;
     if (packetCounterFlag) {
         if (left < pos + 4) return true;
@@ -288,6 +289,7 @@ bool parsePacket(const uint8_t* data, size_t avail, PacketInfo& out)
             return true; // malformed; headers above still useful
         out.mpuFragmentType = p[pos + 2] >> 4;
         out.mpuSequenceNumber = be32(p + pos + 4);
+        out.mpuSequenceOffset = 4 + pos + 4;
         out.mpu = true;
     } else if (out.payloadType == 0x02) { // signaling
         if (left < pos + 2)
@@ -472,19 +474,58 @@ int64_t usToNtpDelta(int64_t us)
     return neg ? -static_cast<int64_t>(ntp) : static_cast<int64_t>(ntp);
 }
 
-void shiftBasicEntriesInPlace(std::vector<uint8_t>& table, const MptView& view, int64_t ntpDelta)
+// Applies the timeline shift (basic entries) and the per-pid MPU sequence
+// renumbering (basic + extended entries) to every asset, in place: the
+// transformed fields keep their sizes, so the table layout is untouched.
+void transformEntriesInPlace(std::vector<uint8_t>& table, const MptView& view,
+                             int64_t ntpDelta,
+                             const std::map<uint16_t, int64_t>* mpuSeqOffsets)
 {
+    const auto writeBe32 = [](uint8_t* p, uint32_t v) {
+        p[0] = static_cast<uint8_t>(v >> 24);
+        p[1] = static_cast<uint8_t>(v >> 16);
+        p[2] = static_cast<uint8_t>(v >> 8);
+        p[3] = static_cast<uint8_t>(v);
+    };
     for (const auto& a : view.assets) {
+        int64_t seqOff = 0;
+        if (mpuSeqOffsets) {
+            const auto it = mpuSeqOffsets->find(a.packetId);
+            if (it != mpuSeqOffsets->end())
+                seqOff = it->second;
+        }
         walkDescriptors(table.data() + a.descOffset, a.descLength,
             [&](uint16_t tag, const uint8_t* d, size_t total, size_t hdr) {
-            if (tag != kMpuTimestampTag)
+            uint8_t* base = table.data() + (d - table.data());
+            if (tag == kMpuTimestampTag) {
+                for (size_t pos = hdr; pos + 12 <= total; pos += 12) {
+                    uint8_t* entry = base + pos;
+                    if (seqOff != 0)
+                        writeBe32(entry, static_cast<uint32_t>(be32(entry) + seqOff));
+                    if (ntpDelta != 0) {
+                        const uint64_t shifted = be64(entry + 4) + static_cast<uint64_t>(ntpDelta);
+                        for (int i = 0; i < 8; i++)
+                            entry[4 + i] = static_cast<uint8_t>(shifted >> (8 * (7 - i)));
+                    }
+                }
                 return;
-            for (size_t pos = hdr; pos + 12 <= total; pos += 12) {
-                uint8_t* entry = table.data() + (d - table.data()) + pos;
-                const uint64_t ntp = be64(entry + 4);
-                const uint64_t shifted = ntp + static_cast<uint64_t>(ntpDelta);
-                for (int i = 0; i < 8; i++)
-                    entry[4 + i] = static_cast<uint8_t>(shifted >> (8 * (7 - i)));
+            }
+            if (tag == kMpuExtendedTimestampTag && seqOff != 0) {
+                size_t pos = hdr;
+                if (pos >= total) return;
+                const uint8_t flags = d[pos];
+                const uint8_t ptsOffsetType = (flags >> 1) & 0b11;
+                pos += 1;
+                if (flags & 1) pos += 4;
+                if (ptsOffsetType == 1) pos += 2;
+                while (pos + 8 <= total) {
+                    const uint8_t numAu = d[pos + 7];
+                    const size_t entryLen = 8 + static_cast<size_t>(numAu) * (ptsOffsetType == 2 ? 4 : 2);
+                    if (pos + entryLen > total)
+                        break;
+                    writeBe32(base + pos, static_cast<uint32_t>(be32(d + pos) + seqOff));
+                    pos += entryLen;
+                }
             }
         });
     }
@@ -496,7 +537,8 @@ std::optional<std::vector<uint8_t>> patchMptVideoTimestamps(
     const std::vector<uint8_t>& mptTable, uint16_t videoPacketId,
     const std::vector<MpuTiming>& newMpus,
     uint32_t dropSeqMin, uint32_t dropSeqMax,
-    int64_t shiftUs)
+    int64_t shiftUs,
+    const std::map<uint16_t, int64_t>* mpuSeqOffsets)
 {
     MptView view;
     if (!parseMpt(mptTable, view))
@@ -624,13 +666,14 @@ std::optional<std::vector<uint8_t>> patchMptVideoTimestamps(
     out[view.tableLengthOffset] = static_cast<uint8_t>(newLen >> 8);
     out[view.tableLengthOffset + 1] = static_cast<uint8_t>(newLen);
 
-    // Rebase: shift every asset's mpu_timestamp entries (kept originals and
-    // the freshly emitted ones alike) onto the target timeline.
-    if (shiftUs != 0) {
+    // Rebase / renumber: shift every asset's mpu_timestamp entries (kept
+    // originals and the freshly emitted ones alike) onto the target timeline,
+    // and translate MPU sequence numbers to the output numbering.
+    if (shiftUs != 0 || (mpuSeqOffsets && !mpuSeqOffsets->empty())) {
         MptView outView;
         if (!parseMpt(out, outView))
             return std::nullopt;
-        shiftBasicEntriesInPlace(out, outView, usToNtpDelta(shiftUs));
+        transformEntriesInPlace(out, outView, usToNtpDelta(shiftUs), mpuSeqOffsets);
     }
     return out;
 }
