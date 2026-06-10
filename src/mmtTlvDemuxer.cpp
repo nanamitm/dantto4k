@@ -865,6 +865,24 @@ void MmtTlvDemuxer::processMpu(Common::ReadStream& stream) {
         mmtStream->lastMpuSequenceNumber = mpu.mpuSequenceNumber;
         mmtStream->auIndex = 0;
     }
+    else if (mpu.mpuSequenceNumber != *mmtStream->lastMpuSequenceNumber) {
+        // MPU sequence discontinuity (packet loss spanning MPUs, or a seam in a
+        // stream stitched from RAP-aligned cuts). Without a resync the sequence
+        // tracker can never advance again (+1 chain is broken) and timestamp
+        // lookups fail for every following MPU, muting the stream for good.
+        const bool backward = mpu.mpuSequenceNumber < *mmtStream->lastMpuSequenceNumber;
+        mmtStream->lastMpuSequenceNumber = mpu.mpuSequenceNumber;
+        mmtStream->auIndex = 0;
+        if (mmtStream->mpuProcessor) {
+            mmtStream->mpuProcessor->clear();
+        }
+        if (backward) {
+            // Stale entries with larger sequence numbers would block the
+            // replacement rules in processMpuTimestampDescriptor.
+            mmtStream->mpuTimestamps.clear();
+            mmtStream->mpuExtendedTimestamps.clear();
+        }
+    }
 
     auto validator = getFragmentValidator(mmtp.packetId);
     auto assembler = getAssembler(mmtp.packetId);
