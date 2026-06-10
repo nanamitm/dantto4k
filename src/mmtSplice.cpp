@@ -185,17 +185,27 @@ void appendBasicTimestampDescriptors(std::vector<uint8_t>& out,
 // broadcast layout satisfies by always placing one instance last. The patched
 // asset must therefore carry exactly ONE 0x8026 instance, placed last, and all
 // its entries (new + kept originals) must fit its 8-bit length (<= 255 bytes).
+//
+// The instance keeps the original ptsOffsetType: with type 1 (single default
+// pts offset) an entry costs 8 + numAu*2 bytes, the same as the broadcast
+// layout, so the rebuilt instance can hold as many entries as the original
+// did. Converting to type 2 would double the per-entry size and silently
+// overflow the 255-byte cap, starving later MPUs of timestamps.
 void appendExtendedTimestampDescriptor(std::vector<uint8_t>& out,
                                        const std::vector<MpuTiming>& entries,
-                                       uint32_t timescale)
+                                       uint32_t timescale,
+                                       uint8_t ptsOffsetType,
+                                       uint16_t defaultPtsOffset)
 {
     std::vector<uint8_t> body;
-    body.push_back(static_cast<uint8_t>((2 << 1) | 1)); // ptsOffsetType=2, timescaleFlag=1
+    body.push_back(static_cast<uint8_t>((ptsOffsetType << 1) | 1)); // + timescaleFlag
     putBe32(body, timescale);
+    if (ptsOffsetType == 1)
+        putBe16(body, defaultPtsOffset);
     for (const auto& m : entries) {
         const size_t numAu = m.dtsPtsOffsets.size();
-        const size_t entryLen = 4 + 1 + 2 + 1 + numAu * 4;
-        if (m.ptsOffsets.size() != numAu || body.size() + entryLen > 255)
+        const size_t entryLen = 4 + 1 + 2 + 1 + numAu * (ptsOffsetType == 2 ? 4 : 2);
+        if (body.size() + entryLen > 255)
             continue; // keep what fits; later MPTs re-announce dropped originals
         putBe32(body, m.mpuSequenceNumber);
         body.push_back(0); // leap indicator / reserved
@@ -203,7 +213,8 @@ void appendExtendedTimestampDescriptor(std::vector<uint8_t>& out,
         body.push_back(static_cast<uint8_t>(numAu));
         for (size_t a = 0; a < numAu; a++) {
             putBe16(body, m.dtsPtsOffsets[a]);
-            putBe16(body, m.ptsOffsets[a]);
+            if (ptsOffsetType == 2)
+                putBe16(body, a < m.ptsOffsets.size() ? m.ptsOffsets[a] : defaultPtsOffset);
         }
     }
     putBe16(out, kMpuExtendedTimestampTag);
@@ -450,10 +461,42 @@ std::vector<std::vector<uint8_t>> packVideoMpu(const std::vector<VideoAu>& aus,
 }
 
 // ---------------------------------------------------------------------------
+namespace {
+
+// NTP64 representation of a (possibly negative) microsecond delta.
+int64_t usToNtpDelta(int64_t us)
+{
+    const bool neg = us < 0;
+    const uint64_t mag = static_cast<uint64_t>(neg ? -us : us);
+    const uint64_t ntp = ((mag / 1000000ULL) << 32) | ((mag % 1000000ULL) * 0xFFFFFFFFULL) / 1000000ULL;
+    return neg ? -static_cast<int64_t>(ntp) : static_cast<int64_t>(ntp);
+}
+
+void shiftBasicEntriesInPlace(std::vector<uint8_t>& table, const MptView& view, int64_t ntpDelta)
+{
+    for (const auto& a : view.assets) {
+        walkDescriptors(table.data() + a.descOffset, a.descLength,
+            [&](uint16_t tag, const uint8_t* d, size_t total, size_t hdr) {
+            if (tag != kMpuTimestampTag)
+                return;
+            for (size_t pos = hdr; pos + 12 <= total; pos += 12) {
+                uint8_t* entry = table.data() + (d - table.data()) + pos;
+                const uint64_t ntp = be64(entry + 4);
+                const uint64_t shifted = ntp + static_cast<uint64_t>(ntpDelta);
+                for (int i = 0; i < 8; i++)
+                    entry[4 + i] = static_cast<uint8_t>(shifted >> (8 * (7 - i)));
+            }
+        });
+    }
+}
+
+} // anonymous namespace
+
 std::optional<std::vector<uint8_t>> patchMptVideoTimestamps(
     const std::vector<uint8_t>& mptTable, uint16_t videoPacketId,
     const std::vector<MpuTiming>& newMpus,
-    uint32_t dropSeqMin, uint32_t dropSeqMax)
+    uint32_t dropSeqMin, uint32_t dropSeqMax,
+    int64_t shiftUs)
 {
     MptView view;
     if (!parseMpt(mptTable, view))
@@ -479,6 +522,9 @@ std::optional<std::vector<uint8_t>> patchMptVideoTimestamps(
     std::vector<uint8_t> keptBasic;          // raw 12-byte entries
     std::vector<MpuTiming> mergedExtended = newMpus;
     uint32_t timescale = 0;
+    uint8_t origPtsOffsetType = 1;
+    uint16_t origDefaultPtsOffset = 0;
+    bool origHeaderSeen = false;
 
     const auto inDropRange = [&](uint32_t seq) { return seq >= dropSeqMin && seq <= dropSeqMax; };
     const bool ok = walkDescriptors(desc, video->descLength,
@@ -508,6 +554,11 @@ std::optional<std::vector<uint8_t>> patchMptVideoTimestamps(
                 if (pos + 2 > total) return;
                 defaultPtsOffset = be16(d + pos);
                 pos += 2;
+            }
+            if (!origHeaderSeen) {
+                origHeaderSeen = true;
+                origPtsOffsetType = ptsOffsetType;
+                origDefaultPtsOffset = defaultPtsOffset;
             }
             // Decode entries (normalized to explicit per-AU offsets) so they
             // can be merged into the single rebuilt instance.
@@ -552,7 +603,10 @@ std::optional<std::vector<uint8_t>> patchMptVideoTimestamps(
     }
     basicEntries.insert(basicEntries.end(), keptBasic.begin(), keptBasic.end());
     appendBasicTimestampDescriptors(rebuilt, basicEntries);
-    appendExtendedTimestampDescriptor(rebuilt, mergedExtended, timescale);
+    if (origDefaultPtsOffset == 0 && !mergedExtended.empty() && !mergedExtended.front().ptsOffsets.empty())
+        origDefaultPtsOffset = mergedExtended.front().ptsOffsets.front();
+    appendExtendedTimestampDescriptor(rebuilt, mergedExtended, timescale,
+                                      origPtsOffsetType, origDefaultPtsOffset);
     if (rebuilt.size() > 0xFFFF)
         return std::nullopt;
 
@@ -569,7 +623,60 @@ std::optional<std::vector<uint8_t>> patchMptVideoTimestamps(
         return std::nullopt;
     out[view.tableLengthOffset] = static_cast<uint8_t>(newLen >> 8);
     out[view.tableLengthOffset + 1] = static_cast<uint8_t>(newLen);
+
+    // Rebase: shift every asset's mpu_timestamp entries (kept originals and
+    // the freshly emitted ones alike) onto the target timeline.
+    if (shiftUs != 0) {
+        MptView outView;
+        if (!parseMpt(out, outView))
+            return std::nullopt;
+        shiftBasicEntriesInPlace(out, outView, usToNtpDelta(shiftUs));
+    }
     return out;
+}
+
+bool shiftTlvNtpTimestamps(std::vector<uint8_t>& packet, int64_t shiftUs)
+{
+    // TLV(4) + IPv6 fixed header(40) + UDP(8) + NTPv4(48)
+    if (packet.size() < 4 + 40 + 8 + 48 || packet[0] != 0x7F ||
+        packet[1] != static_cast<uint8_t>(TlvPacketType::Ipv6Packet))
+        return false;
+    uint8_t* ip = packet.data() + 4;
+    if ((ip[0] >> 4) != 6 || ip[6] != 17) // version, next header = UDP
+        return false;
+    uint8_t* udp = ip + 40;
+    const uint16_t dstPort = static_cast<uint16_t>((udp[2] << 8) | udp[3]);
+    if (dstPort != 123)
+        return false;
+    uint8_t* ntp = udp + 8;
+    uint32_t csum = static_cast<uint32_t>((udp[6] << 8) | udp[7]);
+
+    const int64_t delta = usToNtpDelta(shiftUs);
+    for (int t = 0; t < 4; t++) {
+        uint8_t* p = ntp + 16 + t * 8;
+        const uint64_t v = be64(p);
+        if (v == 0)
+            continue; // unset timestamp (e.g. origin), leave as-is
+        const uint64_t shifted = v + static_cast<uint64_t>(delta);
+        for (int i = 0; i < 8; i++)
+            p[i] = static_cast<uint8_t>(shifted >> (8 * (7 - i)));
+        if (csum != 0) {
+            // Incremental UDP checksum update (RFC 1624): adjust per 16-bit word.
+            for (int w = 0; w < 4; w++) {
+                const uint16_t oldW = static_cast<uint16_t>((v >> (16 * (3 - w))) & 0xFFFF);
+                const uint16_t newW = static_cast<uint16_t>((shifted >> (16 * (3 - w))) & 0xFFFF);
+                csum = (~csum & 0xFFFF) + (~oldW & 0xFFFF) + newW;
+                csum = (csum & 0xFFFF) + (csum >> 16);
+                csum = (csum & 0xFFFF) + (csum >> 16);
+                csum = ~csum & 0xFFFF;
+            }
+        }
+    }
+    if (csum != 0) {
+        udp[6] = static_cast<uint8_t>(csum >> 8);
+        udp[7] = static_cast<uint8_t>(csum);
+    }
+    return true;
 }
 
 std::vector<PidMpuTime> collectMpuTimestamps(const std::vector<uint8_t>& mptTable)

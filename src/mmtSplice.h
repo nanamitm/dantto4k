@@ -94,13 +94,23 @@ struct MpuTiming {
 // asset whose location carries `videoPacketId`:
 //  - loses all mpu_timestamp / mpu_extended_timestamp entries with sequence
 //    numbers in [dropSeqMin, dropSeqMax] (the replaced original MPUs), and
-//  - gains entries for `newMpus`.
-// Other assets and descriptors are byte-identical. Returns std::nullopt when
-// the table cannot be parsed or the asset is not found.
+//  - gains entries for `newMpus` (presentation times on the SOURCE timeline).
+// Then every asset's mpu_timestamp entries (including the new ones) are
+// shifted by `shiftUs` microseconds -- used to rebase an edited stream onto a
+// continuous timeline; the extended descriptor only carries relative offsets,
+// so it needs no shift. Other descriptors are byte-identical. Returns
+// std::nullopt when the table cannot be parsed or the asset is not found.
 std::optional<std::vector<uint8_t>> patchMptVideoTimestamps(
     const std::vector<uint8_t>& mptTable, uint16_t videoPacketId,
     const std::vector<MpuTiming>& newMpus,
-    uint32_t dropSeqMin, uint32_t dropSeqMax);
+    uint32_t dropSeqMin, uint32_t dropSeqMax,
+    int64_t shiftUs = 0);
+
+// Shifts the four NTP timestamps of a TLV IPv6 NTP packet (TlvPacketType
+// Ipv6Packet carrying UDP port 123) by `shiftUs` microseconds, updating the
+// UDP checksum incrementally. Returns false (packet untouched) when the
+// packet is not a plain IPv6+UDP NTP packet.
+bool shiftTlvNtpTimestamps(std::vector<uint8_t>& packet, int64_t shiftUs);
 
 // mpu_timestamp_descriptor entries of every asset in the MPT, as
 // (packetId, mpuSequenceNumber, presentationTimeUs). Used to time-gate
