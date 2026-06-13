@@ -109,6 +109,14 @@ private:
 	uint64_t lastCaptionManagementDataPts{};
 	uint64_t programStartTime{};
 	int64_t ptsOffset90k{0};
+	// Caption timing: calcPts() is derived from the EIT program start, which is
+	// offset from the actual stream clock. Rather than snapping each caption to
+	// the PCR (which re-spaces them and makes fixed-duration captions overlap),
+	// calibrate one offset per program (recomputed when programStartTime changes)
+	// and shift every caption by it, preserving the TTML relative spacing.
+	int64_t subtitlePtsOffset90k{0};
+	bool subtitleOffsetCalibrated{false};
+	uint64_t subtitleOffsetProgramStart{0};
 	inline static const std::vector<uint8_t> ccis = { 0x43, 0x43, 0x49, 0x53, 0x01, 0x3F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, };
 	ts::DuckContext duck;
 

@@ -393,7 +393,24 @@ void RemuxerHandler::writeSubtitle(const MmtTlv::MmtStream& mmtStream, const B24
         " lastPcr=" + std::to_string(lastPcr) +
         " programStartTime=" + std::to_string(programStartTime) +
         " pesData.size=" + std::to_string(subtitle.pesData.size()));
-    pts = std::max(pts, lastPcr / 300);
+    // calcPts() comes from the EIT program start (whole-second resolution and
+    // offset from the actual stream clock by the scheduled-vs-broadcast gap), so
+    // it is consistently behind the PCR. The old code snapped every caption
+    // independently to the PCR (std::max), which re-spaced them by mux timing and
+    // broke the TTML relative spacing - a fixed-duration caption then overran
+    // into the next one. Instead calibrate one offset per program (recomputed
+    // when programStartTime changes) and apply it to every caption, which keeps
+    // the TTML spacing intact while aligning captions to the stream clock.
+    const uint64_t pcr90 = lastPcr / 300;
+    if (!subtitleOffsetCalibrated || programStartTime != subtitleOffsetProgramStart) {
+        subtitlePtsOffset90k = static_cast<int64_t>(pcr90) - static_cast<int64_t>(pts);
+        subtitleOffsetCalibrated = true;
+        subtitleOffsetProgramStart = programStartTime;
+    }
+    int64_t adjustedPts = static_cast<int64_t>(pts) + subtitlePtsOffset90k;
+    if (adjustedPts < 0)
+        adjustedPts = 0;
+    pts = static_cast<uint64_t>(adjustedPts);
     if (pts == 0) {
         subtitleDebugLog("writeSubtitle: pts==0, skipping");
         return;
@@ -1226,4 +1243,7 @@ void RemuxerHandler::clear() {
     lastCaptionManagementDataPts = 0;
     programStartTime = 0;
     ptsOffset90k = 0;
+    subtitlePtsOffset90k = 0;
+    subtitleOffsetCalibrated = false;
+    subtitleOffsetProgramStart = 0;
 }
