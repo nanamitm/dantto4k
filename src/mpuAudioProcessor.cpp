@@ -5,7 +5,12 @@
 
 namespace MmtTlv {
 
-constexpr int MAX_AAC_FRAME_SIZE = 1024 * 10;
+// The re-muxed LOAS AudioSyncStream header below encodes the frame length in a
+// 13-bit audioMuxLengthBytes field (max 8191). Accepting a larger frame would
+// truncate that length and corrupt the stream, so cap at the format limit. (The
+// previous 10 KiB value allowed 8192-10240 byte frames that would be silently
+// mangled.) Frames above this are dropped rather than corrupted.
+constexpr int MAX_AAC_FRAME_SIZE = 8191;
 
 std::optional<MfuData> MpuAudioProcessor::process(MmtStream& mmtStream, const std::vector<uint8_t>& data, FragmentationIndicator fragmentationIndicator) {
     aacFragment.insert(aacFragment.end(), data.begin(), data.end());
