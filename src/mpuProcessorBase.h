@@ -36,10 +36,35 @@ struct MfuData {
 
 class MmtStream;
 
+// Outcome of MpuProcessorBase::process(). The previous std::optional<MfuData>
+// could not distinguish "consumed, nothing to output yet" from "data discarded",
+// so dropped fragments on a FirstFragment/MiddleFragment were never counted as
+// output drops. This three-state result makes the intent explicit.
+enum class MfuProcessStatus {
+	Output,        // a (possibly partial) MFU is ready in `data`
+	Accumulating,  // input consumed, nothing to output yet; no data lost
+	Dropped,       // data was discarded (parse error / size cap / missing timestamp)
+};
+
+struct MfuProcessResult {
+	MfuProcessStatus status{MfuProcessStatus::Accumulating};
+	std::optional<MfuData> data{};
+
+	static MfuProcessResult output(MfuData d) {
+		return { MfuProcessStatus::Output, std::move(d) };
+	}
+	static MfuProcessResult accumulating() {
+		return { MfuProcessStatus::Accumulating, std::nullopt };
+	}
+	static MfuProcessResult dropped() {
+		return { MfuProcessStatus::Dropped, std::nullopt };
+	}
+};
+
 class MpuProcessorBase {
 public:
 	virtual ~MpuProcessorBase() = default;
-	virtual std::optional<MfuData> process(MmtStream& mmtStream, const std::vector<uint8_t>& data, FragmentationIndicator fragmentationIndicator) { return std::nullopt; }
+	virtual MfuProcessResult process(MmtStream& mmtStream, const std::vector<uint8_t>& data, FragmentationIndicator fragmentationIndicator) { return MfuProcessResult::accumulating(); }
 	virtual void clear() {}
 
 };

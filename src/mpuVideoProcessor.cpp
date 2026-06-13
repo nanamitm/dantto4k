@@ -11,24 +11,24 @@ constexpr uint8_t CRA_NUT    = 0x15;
 constexpr uint8_t NAL_AUD    = 0x23;
 constexpr uint32_t MAX_NAL_SIZE = 16 * 1024 * 1024;
 
-std::optional<MfuData> MpuVideoProcessor::process(MmtStream& mmtStream, const std::vector<uint8_t>& data, FragmentationIndicator fragmentationIndicator) {
+MfuProcessResult MpuVideoProcessor::process(MmtStream& mmtStream, const std::vector<uint8_t>& data, FragmentationIndicator fragmentationIndicator) {
     Common::ReadStream stream(data);
     MfuData mfuData;
 
     if (nalUnitSize == 0) {
         buffer.clear(); // Clear leftover data from the previous NAL unit.
         if (stream.leftBytes() < 4) {
-            return std::nullopt;
+            return MfuProcessResult::dropped();
         }
 
         nalUnitSize = stream.getBe32U();
         if (nalUnitSize > MAX_NAL_SIZE) {
             clear();
-            return std::nullopt;
+            return MfuProcessResult::dropped();
         }
         if (nalUnitSize == 0 || stream.leftBytes() == 0) {
             clear();
-            return std::nullopt;
+            return MfuProcessResult::dropped();
         }
 
         uint8_t uint8 = stream.peek8U();
@@ -41,7 +41,7 @@ std::optional<MfuData> MpuVideoProcessor::process(MmtStream& mmtStream, const st
             }
             catch (const std::out_of_range&) {
                 clear();
-                return std::nullopt;
+                return MfuProcessResult::dropped();
             }
 
             pts = ptsDts.first;
@@ -65,7 +65,7 @@ std::optional<MfuData> MpuVideoProcessor::process(MmtStream& mmtStream, const st
     size_t remain = stream.leftBytes();
     if (nalUnitSize < remain) {
         clear();
-        return std::nullopt;
+        return MfuProcessResult::dropped();
     }
 
     nalUnitSize -= remain;
@@ -74,7 +74,7 @@ std::optional<MfuData> MpuVideoProcessor::process(MmtStream& mmtStream, const st
 
     if (pts == NOPTS_VALUE) {
         clear();
-        return std::nullopt;
+        return MfuProcessResult::dropped();
     }
 
     mfuData.pts = pts;
@@ -88,7 +88,7 @@ std::optional<MfuData> MpuVideoProcessor::process(MmtStream& mmtStream, const st
     }
 
     mfuData.data = std::move(buffer);
-    return mfuData;
+    return MfuProcessResult::output(std::move(mfuData));
 }
 
 void MpuVideoProcessor::clear() {

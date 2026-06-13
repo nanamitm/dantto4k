@@ -12,7 +12,7 @@ namespace MmtTlv {
 // mangled.) Frames above this are dropped rather than corrupted.
 constexpr int MAX_AAC_FRAME_SIZE = 8191;
 
-std::optional<MfuData> MpuAudioProcessor::process(MmtStream& mmtStream, const std::vector<uint8_t>& data, FragmentationIndicator fragmentationIndicator) {
+MfuProcessResult MpuAudioProcessor::process(MmtStream& mmtStream, const std::vector<uint8_t>& data, FragmentationIndicator fragmentationIndicator) {
     aacFragment.insert(aacFragment.end(), data.begin(), data.end());
 
     MfuData mfuData;
@@ -22,11 +22,11 @@ std::optional<MfuData> MpuAudioProcessor::process(MmtStream& mmtStream, const st
         auto ret = AACUtils::getFrameSize(aacFragment.data(), aacFragment.size());
         if (!ret) {
             clear();
-            return std::nullopt;
+            return MfuProcessResult::dropped();
         }
         if (*ret > MAX_AAC_FRAME_SIZE) {
             clear();
-            return std::nullopt;
+            return MfuProcessResult::dropped();
         }
 
         aacFrameSize = *ret;
@@ -40,7 +40,7 @@ std::optional<MfuData> MpuAudioProcessor::process(MmtStream& mmtStream, const st
             }
             catch (const std::out_of_range&) {
                 clear();
-                return std::nullopt;
+                return MfuProcessResult::dropped();
             }
 
             mfuData.pts = ptsDts.first;
@@ -73,11 +73,11 @@ std::optional<MfuData> MpuAudioProcessor::process(MmtStream& mmtStream, const st
 
         if (aacFragment.size() != 0) {
             clear();
-            return std::nullopt;
+            return MfuProcessResult::dropped();
         }
     }
 
-    return mfuData;
+    return MfuProcessResult::output(std::move(mfuData));
 }
 
 void MpuAudioProcessor::clear() {
@@ -86,4 +86,4 @@ void MpuAudioProcessor::clear() {
     aacFragment.clear();
 }
 
-}
+}

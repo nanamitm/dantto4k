@@ -3,7 +3,7 @@
 
 namespace MmtTlv {
 
-std::optional<MfuData> MpuSubtitleProcessor::process(MmtStream& mmtStream, const std::vector<uint8_t>& data, FragmentationIndicator fragmentationIndicator) {
+MfuProcessResult MpuSubtitleProcessor::process(MmtStream& mmtStream, const std::vector<uint8_t>& data, FragmentationIndicator fragmentationIndicator) {
     Common::ReadStream stream(data);
 
     try {
@@ -35,7 +35,7 @@ std::optional<MfuData> MpuSubtitleProcessor::process(MmtStream& mmtStream, const
         }
 
         if (stream.leftBytes() < dataSize) {
-            return std::nullopt;
+            return MfuProcessResult::dropped();
         }
 
         MfuData mfuData;
@@ -47,10 +47,10 @@ std::optional<MfuData> MpuSubtitleProcessor::process(MmtStream& mmtStream, const
         mfuData.subtitleSubsampleNumber = subsampleNumber;
         mfuData.subtitleLastSubsampleNumber = lastSubsampleNumber;
 
-        return mfuData;
+        return MfuProcessResult::output(std::move(mfuData));
     }
     catch (const std::out_of_range&) {
-        return std::nullopt;
+        return MfuProcessResult::dropped();
     }
 }
 

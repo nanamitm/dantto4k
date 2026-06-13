@@ -954,36 +954,41 @@ void MmtTlvDemuxer::processMfuData(Common::ReadStream& stream) {
     stream.read(data.data(), stream.leftBytes());
 
     const auto ret = mmtStream->mpuProcessor->process(*mmtStream, data, mpu.fragmentationIndicator);
-    if (!ret && (mpu.fragmentationIndicator == FragmentationIndicator::NotFragmented ||
-                 mpu.fragmentationIndicator == FragmentationIndicator::LastFragment)) {
+    // A processor returns Dropped when it discards real data (parse error, size
+    // cap, missing timestamp). Count that as an output drop regardless of the
+    // fragmentation indicator - the previous code only counted it on the
+    // Not/Last fragment, so discarded First/Middle fragments (e.g. an oversized
+    // video NAL) went silently unreported.
+    if (ret.status == MfuProcessStatus::Dropped) {
         statistics.getMmtStat(mmtp.packetId)->outputDrop++;
-    }
-    if (ret) {
-        const auto& mfuData = ret.value();
-        auto* mmtStream = getStreamByIdx(mfuData.streamIndex);
-        if (!mmtStream) {
-            return;
-        }
-
-        if (demuxerHandler) {
-            switch (mmtStream->assetType) {
-            case AssetType::hev1:
-                demuxerHandler->onVideoData(*mmtStream, mfuData);
-                break;
-            case AssetType::mp4a:
-                demuxerHandler->onAudioData(*mmtStream, mfuData);
-                break;
-            case AssetType::stpp:
-                demuxerHandler->onSubtitleData(*mmtStream, mfuData);
-                break;
-            case AssetType::aapp:
-                demuxerHandler->onApplicationData(*mmtStream, mpu, dataUnit, mfuData);
-                break;
-            }
-        }
-    }
-    else {
         validator->clear();
+        return;
+    }
+    if (ret.status != MfuProcessStatus::Output || !ret.data) {
+        return; // Accumulating: input consumed, nothing to output yet.
+    }
+
+    const auto& mfuData = *ret.data;
+    auto* outStream = getStreamByIdx(mfuData.streamIndex);
+    if (!outStream) {
+        return;
+    }
+
+    if (demuxerHandler) {
+        switch (outStream->assetType) {
+        case AssetType::hev1:
+            demuxerHandler->onVideoData(*outStream, mfuData);
+            break;
+        case AssetType::mp4a:
+            demuxerHandler->onAudioData(*outStream, mfuData);
+            break;
+        case AssetType::stpp:
+            demuxerHandler->onSubtitleData(*outStream, mfuData);
+            break;
+        case AssetType::aapp:
+            demuxerHandler->onApplicationData(*outStream, mpu, dataUnit, mfuData);
+            break;
+        }
     }
 }
 

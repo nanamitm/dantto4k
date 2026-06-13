@@ -3,11 +3,11 @@
 
 namespace MmtTlv {
 
-std::optional<MfuData> MpuApplicationProcessor::process(MmtStream& mmtStream, const std::vector<uint8_t>& data, FragmentationIndicator fragmentationIndicator) {
+MfuProcessResult MpuApplicationProcessor::process(MmtStream& mmtStream, const std::vector<uint8_t>& data, FragmentationIndicator fragmentationIndicator) {
     Common::ReadStream stream(data);
     size_t size = stream.leftBytes();
     if (size == 0) {
-        return std::nullopt;
+        return MfuProcessResult::accumulating(); // empty unit: nothing to output, nothing lost
     }
 
     MfuData mfuData;
@@ -16,7 +16,7 @@ std::optional<MfuData> MpuApplicationProcessor::process(MmtStream& mmtStream, co
 
     mfuData.streamIndex = mmtStream.getStreamIndex();
 
-    return mfuData;
+    return MfuProcessResult::output(std::move(mfuData));
 }
 
-}
+}
