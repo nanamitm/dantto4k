@@ -13,11 +13,46 @@
 
 namespace MmtTlv {
 
+namespace {
+
+uint8_t audioModeToChannels(uint8_t audioMode)
+{
+    switch (audioMode) {
+    case 0b00001: return 1;
+    case 0b00010: return 2;
+    case 0b00011: return 2;
+    case 0b00100: return 3;
+    case 0b00101: return 3;
+    case 0b00110: return 4;
+    case 0b00111: return 4;
+    case 0b01000: return 5;
+    case 0b01001: return 6;
+    case 0b01010: return 7;
+    case 0b01011: return 7;
+    case 0b01100:
+    case 0b01101:
+    case 0b01110:
+    case 0b01111: return 8;
+    case 0b10000: return 12;
+    case 0b10001: return 24;
+    default: return 0;
+    }
+}
+
+} // namespace
+
 std::string MmtsMapWriter::TrackInfo::key() const
 {
     char buf[128];
-    std::snprintf(buf, sizeof(buf), "%s:%d:%04X:%d",
-                  type.c_str(), streamIndex, packetId, componentTag);
+    if (type == "audio") {
+        std::snprintf(buf, sizeof(buf), "%s:%d:%04X:%d:%u:%u",
+                      type.c_str(), streamIndex, packetId, componentTag,
+                      static_cast<unsigned>(audioMode),
+                      static_cast<unsigned>(channels));
+    } else {
+        std::snprintf(buf, sizeof(buf), "%s:%d:%04X:%d",
+                      type.c_str(), streamIndex, packetId, componentTag);
+    }
     return buf;
 }
 
@@ -30,7 +65,9 @@ std::string MmtsMapWriter::TrackInfo::line() const
         << std::dec << " componentTag=" << componentTag;
     if (type == "audio") {
         oss << " rate=" << samplingRate
-            << " latm=" << (latm ? 1 : 0);
+            << " latm=" << (latm ? 1 : 0)
+            << " audioMode=" << static_cast<unsigned>(audioMode)
+            << " channels=" << static_cast<unsigned>(channels);
     }
     return oss.str();
 }
@@ -135,7 +172,10 @@ std::string MmtsMapWriter::describeTracks(const std::vector<TrackInfo>& tracks, 
             << ":0x" << std::hex << std::uppercase << track.packetId
             << std::dec << ":" << track.componentTag;
         if (track.type == "audio")
-            oss << ":" << track.samplingRate << ":" << (track.latm ? 1 : 0);
+            oss << ":" << track.samplingRate
+                << ":" << (track.latm ? 1 : 0)
+                << ":" << static_cast<unsigned>(track.audioMode)
+                << ":" << static_cast<unsigned>(track.channels);
     }
     return any ? oss.str() : "-";
 }
@@ -205,17 +245,19 @@ void MmtsMapWriter::writeBinary(std::ofstream& ofs) const
     struct BinaryTrack {
         uint8_t type;
         uint8_t flags;
-        uint16_t reserved;
+        uint8_t audioMode;
+        uint8_t channels;
         int32_t streamIndex;
         uint16_t packetId;
         int16_t componentTag;
         uint32_t samplingRate;
-        uint32_t reserved2;
+        uint32_t reserved;
     };
+    static_assert(sizeof(BinaryTrack) == 20);
 
-    const char magic[8] = { 'M', 'M', 'T', 'S', 'M', 'A', 'P', '2' };
+    const char magic[8] = { 'M', 'M', 'T', 'S', 'M', 'A', 'P', '3' };
     ofs.write(magic, sizeof(magic));
-    writePod<uint32_t>(ofs, 2);
+    writePod<uint32_t>(ofs, 3);
     writePod<uint32_t>(ofs, 0);
     writePod<uint64_t>(ofs, sourceSize);
     writePod<int64_t>(ofs, (firstVideoPtsMs >= 0 && lastVideoPtsMs >= firstVideoPtsMs)
@@ -234,6 +276,8 @@ void MmtsMapWriter::writeBinary(std::ofstream& ofs) const
         BinaryTrack rec{};
         rec.type = trackTypeCode(track.type);
         rec.flags = track.latm ? 1 : 0;
+        rec.audioMode = track.audioMode;
+        rec.channels = track.channels;
         rec.streamIndex = static_cast<int32_t>(track.streamIndex);
         rec.packetId = track.packetId;
         rec.componentTag = static_cast<int16_t>(track.componentTag);
@@ -298,7 +342,16 @@ void MmtsMapWriter::onAudioData(const MmtStream& stream, const MfuData&)
     track.packetId = stream.getPacketId();
     track.componentTag = stream.getComponentTag();
     track.samplingRate = stream.getSamplingRate();
-    track.latm = stream.is22_2chAudio();
+    if (auto desc = stream.getMhAudioComponentDescriptor()) {
+        const auto& audio = desc->get();
+        track.componentTag = audio.componentTag;
+        track.samplingRate = audio.getConvertedSamplingRate();
+        track.audioMode = audio.getAudioMode();
+        track.channels = audioModeToChannels(track.audioMode);
+        track.latm = audio.is22_2chAudio();
+    } else {
+        track.latm = stream.is22_2chAudio();
+    }
     rememberTrack(track);
 }
 
@@ -363,6 +416,8 @@ void MmtsMapWriter::onMpt(const Mpt& mpt)
                         static_cast<const MhAudioComponentDescriptor*>(descriptor.get());
                     track.componentTag = audio->componentTag;
                     track.samplingRate = audio->getConvertedSamplingRate();
+                    track.audioMode = audio->getAudioMode();
+                    track.channels = audioModeToChannels(track.audioMode);
                     track.latm = audio->is22_2chAudio();
                 }
             }
