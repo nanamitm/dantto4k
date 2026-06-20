@@ -102,7 +102,15 @@ const bool CBonTuner::GetTsStream(uint8_t** ppDst, uint32_t* pdwSize, uint32_t* 
 
 	inputBuffer.erase(inputBuffer.begin(), inputBuffer.begin() + (inputBuffer.size() - input.leftBytes()));
 
-	if (g_bonDriverContext.remuxOutput.size() < 188 * 1024) {
+	// pdwRemain tells the caller (e.g. TVTest's BonDriverSourceFilter) whether to poll
+	// again immediately instead of waiting its normal poll interval. Previously this
+	// always returned 0, which capped our effective throughput at one GetTsStream()
+	// call per poll interval regardless of how much undemuxed data was still queued -
+	// at 8K bitrates the underlying tuner driver's ring buffer could overflow during
+	// that wait, corrupting MMT/TLV data (manifesting as HEVC decode errors downstream)
+	// even though TS continuity counters stayed intact (we regenerate them on remux).
+	if (g_bonDriverContext.remuxOutput.empty()) {
+		*pdwRemain = static_cast<uint32_t>(inputBuffer.size());
 		return false;
 	}
 
@@ -110,7 +118,7 @@ const bool CBonTuner::GetTsStream(uint8_t** ppDst, uint32_t* pdwSize, uint32_t* 
 
 	*ppDst = outputBuffer.data();
 	*pdwSize = static_cast<uint32_t>(outputBuffer.size());
-	*pdwRemain = 0;
+	*pdwRemain = static_cast<uint32_t>(inputBuffer.size());
 	return true;
 }
 
