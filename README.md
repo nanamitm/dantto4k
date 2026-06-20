@@ -74,10 +74,15 @@ extern "C" __declspec(dllexport) BOOL WINAPI GetMmtsRecordingStatus(DWORD sessio
 録画保存時は、保存先が `record.mmts` の場合に `record.mmtsmap` も同時に作成します。`.mmtsmap` にはトラック構成、MPT 変化点、RAP、約 5 秒間隔のシーク候補が記録されます。
 
 #### Mirakurunでの動作
-PT4Kで動作する場合、チャンネル再生まで15～20秒かかるため、Mirakurunのtimeout(20秒)を超える場合があります。
-Mirakurunのソースコードを修正してtimeoutを30秒以上に変更する必要があります。
+PT4Kで動作する場合、チャンネル再生まで15～20秒かかることがあります。
+Mirakurunの既定 timeout のままだと、環境によってはストリーム開始前に切断される場合があります。
 
-https://github.com/Chinachu/Mirakurun/blob/master/src/Mirakurun/Tuner.ts
+少なくとも以下の timeout を 30 秒以上に調整してください。
+
+- `src/Mirakurun/Server.ts` の HTTP server timeout
+- `src/Mirakurun/Tuner.ts` の `getServices()` timeout
+
+このリポジトリで併用している Windows 向け Mirakurun fork では、上記 2 か所を 30 秒に調整済みです。
 
 ### CasProxyServer
 スマートカードのプロキシサーバーが必要な場合、以下のリポジトリから構築できます。
