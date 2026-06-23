@@ -1,5 +1,6 @@
 ﻿#include "aribUtil.h"
 #include "aribEncoder.h"
+#include "config.h"
 
 namespace {
 
@@ -8,8 +9,11 @@ struct Gaiji {
     const char8_t* replacement;
 };
 
-constexpr Gaiji GaijiTable[] = {
-    // ARIB STD-B62
+// ARIB STD-B62 resolution/audio-format pictograms (4K/8K/22.2ch/HDR/...).
+// These overlap with information TVTest (and similarly capable players) can
+// now show natively as icons, so converting them to bracketed text is
+// optional and controlled by [epg] convertResolutionGaiji in the ini.
+constexpr Gaiji ResolutionGaijiTable[] = {
     {u8"\U0001F19B", u8"[3D]"},
     {u8"\U0001F19C", u8"[2nd Scr]"},
     {u8"\U0001F19D", u8"[2K]"},
@@ -28,6 +32,9 @@ constexpr Gaiji GaijiTable[] = {
     {u8"\U0001F1AA", u8"[SHV]"},
     {u8"\U0001F1AB", u8"[UHD]"},
     {u8"\U0001F1AC", u8"[VOD]"},
+};
+
+constexpr Gaiji GaijiTable[] = {
     {u8"\U0001F23B", u8"[配]"},
     {u8"\U000032FF", u8"令和"},
 
@@ -138,6 +145,16 @@ void replaceSequence(std::string& str, std::string_view sequence, const char* re
 }
 
 void convertGaiji(std::string& str) {
+    // Most fonts (including TVTest's own ARIB symbol font support) have no
+    // glyph for these newer pictograms, so even with the bracket-text
+    // conversion disabled we still strip them rather than leaving an
+    // unrenderable private-use character behind.
+    for (const auto& gaiji : ResolutionGaijiTable) {
+        const char* replacement = config.convertResolutionGaiji
+            ? reinterpret_cast<const char*>(gaiji.replacement)
+            : "";
+        replaceSequence(str, reinterpret_cast<const char*>(gaiji.find), replacement);
+    }
     for (const auto& gaiji : GaijiTable) {
         replaceSequence(str, reinterpret_cast<const char*>(gaiji.find), reinterpret_cast<const char*>(gaiji.replacement));
     }
