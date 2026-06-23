@@ -19,6 +19,8 @@
 #include <chrono>
 #include <thread>
 #include <cstdarg>
+#include <fstream>
+#include <sstream>
 
 #include "../../src/IBonDriver2.h"
 
@@ -54,6 +56,87 @@ std::wstring GetIniPathNextToThisDll(HMODULE hModule)
 	s += L".ini";
 	return s;
 }
+
+// GetPrivateProfileStringW() decodes ini files using the system ANSI code
+// page (Shift-JIS on a Japanese system) unless the file has a UTF-16 LE BOM.
+// A plain UTF-8 ini (the default for most text editors today) containing
+// non-ASCII characters - e.g. a Japanese recording filename in FilePath= -
+// comes out garbled, which then fails to open as a file path. Parse the
+// handful of key=value lines we care about ourselves, decoding explicitly
+// as UTF-8, instead of relying on that legacy behavior.
+std::wstring ReadIniStringUtf8(
+	const std::wstring &iniPath, const wchar_t *pSection, const wchar_t *pKey, const wchar_t *pDefault)
+{
+	std::ifstream file(iniPath, std::ios::binary);
+	if (!file)
+		return pDefault;
+
+	std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+
+	if (content.size() >= 3
+			&& static_cast<unsigned char>(content[0]) == 0xEF
+			&& static_cast<unsigned char>(content[1]) == 0xBB
+			&& static_cast<unsigned char>(content[2]) == 0xBF) {
+		content.erase(0, 3);
+	}
+
+	char sectionUtf8[256] = {};
+	char keyUtf8[256] = {};
+	::WideCharToMultiByte(CP_UTF8, 0, pSection, -1, sectionUtf8, sizeof(sectionUtf8), nullptr, nullptr);
+	::WideCharToMultiByte(CP_UTF8, 0, pKey, -1, keyUtf8, sizeof(keyUtf8), nullptr, nullptr);
+	const std::string targetSection = std::string("[") + sectionUtf8 + "]";
+	const std::string targetKey = keyUtf8;
+
+	std::istringstream stream(content);
+	std::string line;
+	bool inTargetSection = false;
+
+	while (std::getline(stream, line)) {
+		while (!line.empty() && (line.back() == '\r' || line.back() == '\n'))
+			line.pop_back();
+
+		const size_t start = line.find_first_not_of(" \t");
+		if (start == std::string::npos)
+			continue;
+		const std::string trimmed = line.substr(start);
+
+		if (trimmed.empty() || trimmed[0] == ';' || trimmed[0] == '#')
+			continue;
+
+		if (trimmed.front() == '[') {
+			inTargetSection = (trimmed == targetSection);
+			continue;
+		}
+
+		if (!inTargetSection)
+			continue;
+
+		const size_t eq = trimmed.find('=');
+		if (eq == std::string::npos)
+			continue;
+
+		std::string key = trimmed.substr(0, eq);
+		while (!key.empty() && (key.back() == ' ' || key.back() == '\t'))
+			key.pop_back();
+
+		if (key != targetKey)
+			continue;
+
+		std::string value = trimmed.substr(eq + 1);
+		if (value.size() >= 2 && value.front() == '"' && value.back() == '"')
+			value = value.substr(1, value.size() - 2);
+
+		const int WLen = ::MultiByteToWideChar(CP_UTF8, 0, value.c_str(), -1, nullptr, 0);
+		if (WLen <= 0)
+			return pDefault;
+		std::wstring result(static_cast<size_t>(WLen - 1), L'\0');
+		::MultiByteToWideChar(CP_UTF8, 0, value.c_str(), -1, result.data(), WLen);
+		return result;
+	}
+
+	return pDefault;
+}
+
 
 std::wstring GetDantto4kExePathNextToThisDll(HMODULE hModule)
 {
@@ -170,7 +253,10 @@ public:
 		DLog(L"OpenTuner: iniPath=%ls", iniPath);
 
 		wchar_t filePath[MAX_PATH] = {};
-		::GetPrivateProfileStringW(L"BonDriver_File_MMTS", L"FilePath", L"", filePath, MAX_PATH, iniPath);
+		wcsncpy_s(
+			filePath,
+			ReadIniStringUtf8(path, L"BonDriver_File_MMTS", L"FilePath", L"").c_str(),
+			_TRUNCATE);
 		DLog(L"OpenTuner: filePath=%ls", filePath);
 		if (filePath[0] == L'\0') {
 			::OutputDebugStringW(L"BonDriver_File_MMTS: FilePath not set in ini\n");
