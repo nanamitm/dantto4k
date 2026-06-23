@@ -29,21 +29,11 @@ namespace {
 constexpr DWORD kChunkSize = 188 * 1024; // arbitrary, not MMT-TLV-packet-aligned
 constexpr double kDefaultBitrateMbps = 100.0; // pacing cap, above typical 8K bitrates
 
-void DLog(const wchar_t *pFormat, ...)
-{
-	FILE *fp = nullptr;
-	if (_wfopen_s(&fp, L"C:\\Free Soft Ware\\TVTeset4k8k\\bondriver_file_mmts_debug.log", L"a, ccs=UTF-8") != 0 || fp == nullptr)
-		return;
-	SYSTEMTIME st;
-	::GetLocalTime(&st);
-	fwprintf(fp, L"%02d:%02d:%02d.%03d ", st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
-	va_list args;
-	va_start(args, pFormat);
-	vfwprintf(fp, pFormat, args);
-	va_end(args);
-	fwprintf(fp, L"\n");
-	fclose(fp);
-}
+} // namespace
+
+static HMODULE g_hModule = nullptr;
+
+namespace {
 
 std::wstring GetIniPathNextToThisDll(HMODULE hModule)
 {
@@ -135,6 +125,41 @@ std::wstring ReadIniStringUtf8(
 	}
 
 	return pDefault;
+}
+
+
+// Only logs when BonDriver_File_MMTS.ini has [BonDriver_File_MMTS]
+// DebugLogPath= set. When absent, the cached path stays empty and every
+// subsequent call returns immediately without touching _wfopen_s.
+const std::wstring &GetDebugLogPath()
+{
+	static const std::wstring s_Path = [] {
+		return ReadIniStringUtf8(
+			GetIniPathNextToThisDll(g_hModule), L"BonDriver_File_MMTS", L"DebugLogPath", L"");
+	}();
+
+	return s_Path;
+}
+
+
+void DLog(const wchar_t *pFormat, ...)
+{
+	const std::wstring &LogPath = GetDebugLogPath();
+	if (LogPath.empty())
+		return;
+
+	FILE *fp = nullptr;
+	if (_wfopen_s(&fp, LogPath.c_str(), L"a, ccs=UTF-8") != 0 || fp == nullptr)
+		return;
+	SYSTEMTIME st;
+	::GetLocalTime(&st);
+	fwprintf(fp, L"%02d:%02d:%02d.%03d ", st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
+	va_list args;
+	va_start(args, pFormat);
+	vfwprintf(fp, pFormat, args);
+	va_end(args);
+	fwprintf(fp, L"\n");
+	fclose(fp);
 }
 
 
@@ -475,8 +500,6 @@ private:
 	bool m_Eof = false;
 	uint64_t m_CallCount = 0;
 };
-
-static HMODULE g_hModule = nullptr;
 
 extern "C" __declspec(dllexport) IBonDriver* CreateBonDriver()
 {
