@@ -55,6 +55,101 @@ std::wstring GetIniPathNextToThisDll(HMODULE hModule)
 	return s;
 }
 
+std::wstring GetDantto4kExePathNextToThisDll(HMODULE hModule)
+{
+	wchar_t path[MAX_PATH] = {};
+	::GetModuleFileNameW(hModule, path, MAX_PATH);
+	std::wstring s = path;
+	const size_t slash = s.find_last_of(L"\\/");
+	s = (slash != std::wstring::npos) ? s.substr(0, slash + 1) : std::wstring();
+	s += L"dantto4k.exe";
+	return s;
+}
+
+// Runs `dantto4k.exe --probe-bitrate <filePath>` and parses the "BITRATE_MBPS="
+// line it prints to stdout. This lets BitrateMbps be auto-detected from the
+// file's own MPU presentation timestamps instead of requiring a manually
+// configured (and easily wrong/stale) value in the ini - a mismatched manual
+// value paces playback too fast or too slow relative to real decode speed,
+// which overflows/starves TSSourceFilter's queue and looks like periodic
+// multi-second video freezes. Returns 0.0 on any failure; the caller should
+// fall back to a sane default in that case.
+double ProbeBitrateMbps(const std::wstring &exePath, const std::wstring &filePath)
+{
+	SECURITY_ATTRIBUTES saAttr{};
+	saAttr.nLength = sizeof(SECURITY_ATTRIBUTES);
+	saAttr.bInheritHandle = TRUE;
+
+	HANDLE hReadPipe = nullptr, hWritePipe = nullptr;
+	if (!::CreatePipe(&hReadPipe, &hWritePipe, &saAttr, 0)) {
+		DLog(L"ProbeBitrateMbps: CreatePipe failed, GetLastError=%lu", ::GetLastError());
+		return 0.0;
+	}
+	::SetHandleInformation(hReadPipe, HANDLE_FLAG_INHERIT, 0);
+
+	STARTUPINFOW si{};
+	si.cb = sizeof(si);
+	si.hStdOutput = hWritePipe;
+	si.hStdError = hWritePipe;
+	si.dwFlags |= STARTF_USESTDHANDLES;
+
+	PROCESS_INFORMATION pi{};
+
+	std::wstring cmdLine = L"\"" + exePath + L"\" --probe-bitrate \"" + filePath + L"\"";
+	std::vector<wchar_t> cmdLineBuf(cmdLine.begin(), cmdLine.end());
+	cmdLineBuf.push_back(L'\0');
+
+	DLog(L"ProbeBitrateMbps: launching %ls", cmdLine.c_str());
+
+	const BOOL created = ::CreateProcessW(
+		nullptr, cmdLineBuf.data(), nullptr, nullptr, TRUE,
+		CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
+
+	::CloseHandle(hWritePipe);
+
+	if (!created) {
+		DLog(L"ProbeBitrateMbps: CreateProcessW failed, GetLastError=%lu", ::GetLastError());
+		::CloseHandle(hReadPipe);
+		return 0.0;
+	}
+
+	std::string output;
+	char buf[4096];
+	DWORD bytesRead = 0;
+	while (::ReadFile(hReadPipe, buf, sizeof(buf), &bytesRead, nullptr) && bytesRead > 0) {
+		output.append(buf, bytesRead);
+	}
+	::CloseHandle(hReadPipe);
+
+	::WaitForSingleObject(pi.hProcess, 60000); // up to 60s for a large file scan
+	DWORD exitCode = 1;
+	::GetExitCodeProcess(pi.hProcess, &exitCode);
+	::CloseHandle(pi.hProcess);
+	::CloseHandle(pi.hThread);
+
+	DLog(L"ProbeBitrateMbps: exitCode=%lu outputLen=%zu", exitCode, output.size());
+
+	if (exitCode != 0)
+		return 0.0;
+
+	const std::string key = "BITRATE_MBPS=";
+	const size_t pos = output.find(key);
+	if (pos == std::string::npos) {
+		DLog(L"ProbeBitrateMbps: BITRATE_MBPS not found in dantto4k output");
+		return 0.0;
+	}
+
+	try {
+		const double mbps = std::stod(output.substr(pos + key.size()));
+		DLog(L"ProbeBitrateMbps: parsed mbps=%.3f", mbps);
+		return mbps;
+	}
+	catch (...) {
+		DLog(L"ProbeBitrateMbps: failed to parse mbps value");
+		return 0.0;
+	}
+}
+
 } // namespace
 
 class CBonDriverFileMMTS : public IBonDriver2
@@ -83,10 +178,23 @@ public:
 			return false;
 		}
 
-		const double bitrateMbps = static_cast<double>(::GetPrivateProfileIntW(
-			L"BonDriver_File_MMTS", L"BitrateMbps", static_cast<int>(kDefaultBitrateMbps), iniPath));
+		double bitrateMbps = static_cast<double>(::GetPrivateProfileIntW(
+			L"BonDriver_File_MMTS", L"BitrateMbps", 0, iniPath));
+		if (bitrateMbps <= 0.0) {
+			// No (or zero) BitrateMbps configured: auto-detect from the file's own
+			// MPU presentation timestamps instead of silently falling back to a
+			// guessed constant. A wrong manual value here paces playback at the
+			// wrong speed relative to real decode speed, which looks like periodic
+			// multi-second video freezes downstream in TVTest - this is exactly
+			// the bug that motivated adding auto-detection.
+			DLog(L"OpenTuner: BitrateMbps not set (or 0) in ini, auto-detecting...");
+			const std::wstring exePath = GetDantto4kExePathNextToThisDll(m_hModule);
+			const double detected = ProbeBitrateMbps(exePath, filePath);
+			bitrateMbps = (detected > 0.0) ? detected : kDefaultBitrateMbps;
+			DLog(L"OpenTuner: auto-detect result=%.3f, using bitrateMbps=%.3f", detected, bitrateMbps);
+		}
 		m_BytesPerSec = (bitrateMbps * 1'000'000.0) / 8.0;
-		DLog(L"OpenTuner: bitrateMbps=%.1f BytesPerSec=%.0f", bitrateMbps, m_BytesPerSec);
+		DLog(L"OpenTuner: bitrateMbps=%.3f BytesPerSec=%.0f", bitrateMbps, m_BytesPerSec);
 
 		m_File = _wfsopen(filePath, L"rb", _SH_DENYNO);
 		if (!m_File) {
