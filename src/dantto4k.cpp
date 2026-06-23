@@ -45,6 +45,7 @@ struct Args {
     bool probeTsClocks{false};
     bool probeBitrate{false};
     size_t probeSampleLimit{128};
+    uint64_t probeBitrateSampleBytes{256ULL * 1024 * 1024};
 };
 
 class NullDemuxerHandler : public MmtTlv::DemuxerHandler {
@@ -539,6 +540,7 @@ Args parseArguments(int argc, char* argv[]) {
             ("probe-ts-video-pts", "Probe MPEG-2 TS video PES PTS values", cxxopts::value<bool>()->default_value("false"))
             ("probe-ts-clocks", "Probe MPEG-2 TS PCR and video/audio PES PTS values", cxxopts::value<bool>()->default_value("false"))
             ("probe-bitrate", "Estimate average bitrate (Mbps) from MPU presentation timestamps and print it", cxxopts::value<bool>()->default_value("false"))
+            ("probe-bitrate-sample-mb", "With --probe-bitrate, stop after reading this many MB instead of scanning the whole file (0 = no limit, scan to EOF)", cxxopts::value<uint64_t>()->default_value("256"))
             ("probe-sample-limit", "Number of initial MFU samples to print per video stream", cxxopts::value<size_t>()->default_value("128"))
             ("no-progress", "Disable progress display", cxxopts::value<bool>()->default_value("false"))
             ("no-stats", "Disable packet statistics", cxxopts::value<bool>()->default_value("false"))
@@ -574,6 +576,7 @@ Args parseArguments(int argc, char* argv[]) {
         args.probeTsClocks = probeTsClocks;
         args.probeBitrate = probeBitrate;
         args.probeSampleLimit = result["probe-sample-limit"].as<size_t>();
+        args.probeBitrateSampleBytes = result["probe-bitrate-sample-mb"].as<uint64_t>() * 1024ULL * 1024ULL;
 
         if (result["casProxyServer"].count()) {
             std::string casProxyServer = result["casProxyServer"].as<std::string>();
@@ -943,6 +946,7 @@ int main(int argc, char* argv[]) {
 
     std::vector<uint8_t> inputBuffer;
     inputBuffer.reserve(chunkSize * 2);
+    uint64_t totalConsumed = 0;
     while (true) {
         if (!useStdin && inputStream->eof()) {
             break;
@@ -964,12 +968,24 @@ int main(int argc, char* argv[]) {
                 break;
             }
         }
-        
+
         auto consumed = inputBuffer.size() - stream.leftBytes();
         if (consumed > 0) {
             progressReporter.update(consumed);
         }
         inputBuffer.erase(inputBuffer.begin(), inputBuffer.begin() + consumed);
+
+        totalConsumed += static_cast<uint64_t>(consumed);
+
+        // 巨大な (数十GB の) 8K キャプチャでは、終端の MPU タイムスタンプを得るためだけに
+        // ファイル全体を最後までデマルチプレクスするのは非常に遅い。MMT 放送は概ね CBR
+        // なので、先頭の一定バイト数だけのサンプルから推定したビットレートでも実用上十分
+        // 正確であり、BonDriver_File_MMTS の再生ペーシング用途には全件スキャンは不要。
+        if (args.probeBitrate && args.probeBitrateSampleBytes > 0
+                && totalConsumed >= args.probeBitrateSampleBytes
+                && bitrateProbeHandler.hasData()) {
+            break;
+        }
     }
 
     progressReporter.finish();
@@ -999,7 +1015,10 @@ int main(int argc, char* argv[]) {
             std::cerr << "Degenerate duration; cannot estimate bitrate" << std::endl;
             return 1;
         }
-        const double mbps = static_cast<double>(fileSize) * 8.0 / durationSec / 1'000'000.0;
+        // totalConsumed (実際にデマルチプレクスしたバイト数) を使う。サンプル制限が効いて
+        // 全件スキャンしていない場合、これはファイル全体ではなくサンプル分のバイト数。
+        const double mbps = static_cast<double>(totalConsumed) * 8.0 / durationSec / 1'000'000.0;
+        std::cout << "SAMPLE_BYTES=" << totalConsumed << std::endl;
         std::cout << "DURATION_SEC=" << durationSec << std::endl;
         std::cout << "BITRATE_MBPS=" << mbps << std::endl;
     }
