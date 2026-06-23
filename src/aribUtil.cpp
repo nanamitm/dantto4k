@@ -26,7 +26,6 @@ constexpr Gaiji ResolutionGaijiTable[] = {
     {u8"\U0001F1A4", u8"[120P]"},
     {u8"\U0001F1A5", u8"[ｄ]"},
     {u8"\U0001F1A6", u8"[HC]"},
-    {u8"\U0001F1A7", u8"[HDR]"},
     {u8"\U0001F1A8", u8"[Hi-Res]"},
     {u8"\U0001F1A9", u8"[Lossless]"},
     {u8"\U0001F1AA", u8"[SHV]"},
@@ -35,6 +34,10 @@ constexpr Gaiji ResolutionGaijiTable[] = {
 };
 
 constexpr Gaiji GaijiTable[] = {
+    // HDR has no equivalent structured descriptor that players can derive it
+    // from independently (unlike resolution/channel count), so always keep
+    // it as readable text instead of gating it behind convertResolutionGaiji.
+    {u8"\U0001F1A7", u8"[HDR]"},
     {u8"\U0001F23B", u8"[配]"},
     {u8"\U000032FF", u8"令和"},
 
