@@ -455,8 +455,22 @@ void RemuxerHandler::writeSubtitle(const MmtTlv::MmtStream& mmtStream, const B24
     // into the next one. Instead calibrate one offset per program (recomputed
     // when programStartTime changes) and apply it to every caption, which keeps
     // the TTML spacing intact while aligning captions to the stream clock.
+    const bool needsCalibration = !subtitleOffsetCalibrated || programStartTime != subtitleOffsetProgramStart;
+    if (needsCalibration && lastWrittenPcr == 0) {
+        // No PCR/NTP-derived media clock has been established yet (lastPcr is
+        // still its zero-initialized default). Calibrating against it now
+        // would lock subtitlePtsOffset90k onto a bogus zero anchor, making
+        // every later adjustedPts collapse to 0 and get silently dropped by
+        // the pts==0 check below for the rest of the program - not just this
+        // cue. This happens whenever a caption MFU is demuxed before the
+        // first video PCR or NTP packet, which is more likely the more
+        // streams are multiplexed (e.g. 8K sources with multiple audio
+        // tracks). Drop just this cue and retry calibration on the next one.
+        subtitleDebugLog("writeSubtitle: no PCR established yet, dropping caption until calibration is possible");
+        return;
+    }
     const uint64_t pcr90 = lastPcr / 300;
-    if (!subtitleOffsetCalibrated || programStartTime != subtitleOffsetProgramStart) {
+    if (needsCalibration) {
         subtitlePtsOffset90k = static_cast<int64_t>(pcr90) - static_cast<int64_t>(pts);
         subtitleOffsetCalibrated = true;
         subtitleOffsetProgramStart = programStartTime;
