@@ -786,6 +786,9 @@ std::vector<uint8_t> packPaMptPacket(const std::vector<uint8_t>& mptTable,
 
     const size_t mmtpLen = 12 + 2 + pa.size(); // MMTP hdr + signaling hdr + PA
     const size_t cipLen = 3 + mmtpLen;
+    if (cipLen > 0xFFFF) {
+        return {};
+    }
 
     std::vector<uint8_t> pkt;
     pkt.reserve(4 + cipLen);
