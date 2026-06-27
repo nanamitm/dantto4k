@@ -6,7 +6,6 @@
 #include <iomanip>
 #include <limits>
 #include <map>
-#include <mutex>
 #include <optional>
 #include <sstream>
 #include <vector>
@@ -16,21 +15,9 @@
 #include "config.h"
 #include "pugixml.hpp"
 
+void subtitleDebugLog(const std::string& line);
+
 namespace {
-
-std::mutex g_subtitleDebugLogMutex;
-
-void subtitleDebugLog(const std::string& line) {
-    if (config.subtitleDebugLogPath.empty()) {
-        return;
-    }
-
-    std::lock_guard<std::mutex> lock(g_subtitleDebugLogMutex);
-    std::ofstream stream(config.subtitleDebugLogPath, std::ios::app | std::ios::binary);
-    if (stream) {
-        stream << line << "\n";
-    }
-}
 
 std::string formatCodepoint(uint32_t cp) {
     std::ostringstream ss;

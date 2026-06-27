@@ -43,9 +43,7 @@
 #include <fstream>
 #include <mutex>
 
-namespace {
-
-std::mutex g_subtitleDebugLogMutex;
+static std::mutex g_subtitleDebugLogMutex;
 
 void subtitleDebugLog(const std::string& line) {
     if (config.subtitleDebugLogPath.empty()) {
@@ -58,6 +56,8 @@ void subtitleDebugLog(const std::string& line) {
         stream << line << "\n";
     }
 }
+
+namespace {
 
 int convertRunningStatus(int runningStatus) {
     switch (runningStatus) {
