@@ -99,7 +99,6 @@ private:
 	std::unordered_map<uint16_t, uint8_t> mapCC;
 	std::unordered_map<uint16_t, std::vector<uint8_t>> mapPesPendingData;
 	std::unordered_map<uint16_t, uint32_t> mapPesPacketIndex;
-	std::unordered_map<uint16_t, size_t> mapPesPayloadBytes;
 	std::unordered_map<uint16_t, PesState> mapPesState;
 	std::unordered_map<uint32_t, std::unordered_map<uint32_t, B24DrcsGlyph>> mapSubtitleDrcsGlyphs;
 	std::unordered_map<uint32_t, std::vector<std::string>> mapPendingSubtitleTtml;
