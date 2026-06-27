@@ -206,7 +206,7 @@ void appendExtendedTimestampDescriptor(std::vector<uint8_t>& out,
         const size_t numAu = m.dtsPtsOffsets.size();
         const size_t entryLen = 4 + 1 + 2 + 1 + numAu * (ptsOffsetType == 2 ? 4 : 2);
         if (body.size() + entryLen > 255)
-            continue; // keep what fits; later MPTs re-announce dropped originals
+            break; // 255-byte cap reached; keep entries in sequence-number order
         putBe32(body, m.mpuSequenceNumber);
         body.push_back(0); // leap indicator / reserved
         putBe16(body, m.mpuDecodingTimeOffset);
