@@ -363,7 +363,7 @@ void forEachMfuChunk(const std::vector<VideoAu>& aus, size_t maxFrag, Emit&& emi
         for (const auto& [off, size] : nals) {
             if (size == 0)
                 continue;
-            if (4 + size <= maxFrag) {
+            if (4 + size <= maxFrag || maxFrag <= 4) {
                 MfuChunk c;
                 c.data = au.annexb.data();
                 putBe32(c.head, static_cast<uint32_t>(size));
