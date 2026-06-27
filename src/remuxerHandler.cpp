@@ -44,6 +44,10 @@
 #include <mutex>
 
 static std::mutex g_subtitleDebugLogMutex;
+// 8K HEVC tends to produce sparse PES starts after remux, which makes
+// downstream timestamp propagation fragile in some DirectShow pipelines.
+// Keep 8K video PES payloads much smaller so PUSI/PES starts appear often.
+constexpr size_t MAX_VIDEO_PES_PAYLOAD_8K = 6 * 1024;
 
 void subtitleDebugLog(const std::string& line) {
     if (config.subtitleDebugLogPath.empty()) {
@@ -91,6 +95,25 @@ int assetType2streamType(uint32_t assetType) {
     }
 
     return stream_type;
+}
+
+bool ShouldSplitVideoPes(
+    const MmtTlv::MmtStream& mmtStream,
+    size_t currentPayloadBytes,
+    size_t nextBytes,
+    bool pendingDataEmpty)
+{
+    if (mmtStream.getAssetType() != MmtTlv::AssetType::hev1) {
+        return false;
+    }
+    if (!mmtStream.is8KVideo()) {
+        return false;
+    }
+    if (!pendingDataEmpty) {
+        return false;
+    }
+    return currentPayloadBytes > 0 &&
+        (currentPayloadBytes + nextBytes) > MAX_VIDEO_PES_PAYLOAD_8K;
 }
 
 uint8_t convertTableId(uint8_t mmtTableId) {
@@ -260,11 +283,18 @@ void RemuxerHandler::writeStream(const MmtTlv::MmtStream& mmtStream, const MmtTl
     auto& pendingData = mapPesPendingData[pid];
     auto& cc = mapCC[pid];
     auto& packetIndex = mapPesPacketIndex[pid];
+    auto& currentPesPayloadBytes = mapPesPayloadBytes[pid];
     auto& state = mapPesState[pid];
     size_t offset = 0;
+    const bool splitVideoPes = ShouldSplitVideoPes(
+        mmtStream,
+        currentPesPayloadBytes,
+        streamData.size(),
+        pendingData.empty());
     const bool beginNewPes =
         state != PesState::InFragment ||
-        mfuData.isFirstFragment;
+        mfuData.isFirstFragment ||
+        splitVideoPes;
 
     if (beginNewPes) {
         constexpr AVRational tsTimeBase = { 1, 90000 };
@@ -304,10 +334,21 @@ void RemuxerHandler::writeStream(const MmtTlv::MmtStream& mmtStream, const MmtTl
         }
         pes.pack(pesOutput);
 
+        if (splitVideoPes) {
+            subtitleDebugLog(
+                "video pes split"
+                " pid=" + std::to_string(pid) +
+                " componentTag=" + std::to_string(mmtStream.getComponentTag()) +
+                " currentPayload=" + std::to_string(currentPesPayloadBytes) +
+                " nextBytes=" + std::to_string(streamData.size()) +
+                " maxPayload=" + std::to_string(MAX_VIDEO_PES_PAYLOAD_8K));
+        }
+
         // Reuse existing capacity to avoid reallocation.
         pendingData.clear();
         pendingData.insert(pendingData.end(), pesOutput.begin(), pesOutput.end());
         packetIndex = 0;
+        currentPesPayloadBytes = 0;
 
         state = PesState::InFragment;
     }
@@ -318,6 +359,7 @@ void RemuxerHandler::writeStream(const MmtTlv::MmtStream& mmtStream, const MmtTl
     }
 
     pendingData.insert(pendingData.end(), streamData.begin(), streamData.end());
+    currentPesPayloadBytes += streamData.size();
 
     // Process pending data using the offset
     while (offset < pendingData.size()) {
@@ -1273,6 +1315,7 @@ void RemuxerHandler::clear() {
     mapCC.clear();
     mapPesPendingData.clear();
     mapPesPacketIndex.clear();
+    mapPesPayloadBytes.clear();
     mapPesState.clear();
     mapSubtitleDrcsGlyphs.clear();
     mapPendingSubtitleTtml.clear();
