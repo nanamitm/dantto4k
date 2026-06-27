@@ -472,19 +472,24 @@ std::vector<uint8_t> encodeTextWithDrcs(const std::string& text, const std::unor
             output.insert(output.end(), encoded.begin(), encoded.end());
         }
 
-        if (codeByCodepoint.size() < 94) {
-            auto [it, inserted] = codeByCodepoint.emplace(*cp, static_cast<uint8_t>(0x21 + codeByCodepoint.size()));
-            subtitleDebugLog("DRCS emit " + formatCodepoint(*cp) + " code=0x" + formatCodepoint(it->second).substr(4));
-            output.push_back(B24ControlSet::ESC);
-            output.push_back(0x2A);
-            output.push_back(0x20);
-            output.push_back(0x41);
-            output.push_back(B24ControlSet::SS2);
-            output.push_back(it->second);
-            output.push_back(B24ControlSet::LS0);
-            output.push_back(B24ControlSet::ESC);
-            output.push_back(0x2A);
-            output.push_back(0x30);
+        {
+            auto existingIt = codeByCodepoint.find(*cp);
+            if (existingIt == codeByCodepoint.end() && codeByCodepoint.size() < 94) {
+                existingIt = codeByCodepoint.emplace(*cp, static_cast<uint8_t>(0x21 + codeByCodepoint.size())).first;
+            }
+            if (existingIt != codeByCodepoint.end()) {
+                subtitleDebugLog("DRCS emit " + formatCodepoint(*cp) + " code=0x" + formatCodepoint(existingIt->second).substr(4));
+                output.push_back(B24ControlSet::ESC);
+                output.push_back(0x2A);
+                output.push_back(0x20);
+                output.push_back(0x41);
+                output.push_back(B24ControlSet::SS2);
+                output.push_back(existingIt->second);
+                output.push_back(B24ControlSet::LS0);
+                output.push_back(B24ControlSet::ESC);
+                output.push_back(0x2A);
+                output.push_back(0x30);
+            }
         }
         chunkBegin = pos;
     }
