@@ -78,7 +78,8 @@ const bool CBonTuner::GetTsStream(uint8_t* pDst, uint32_t* pdwSize, uint32_t* pd
 
 const bool CBonTuner::GetTsStream(uint8_t** ppDst, uint32_t* pdwSize, uint32_t* pdwRemain) {
 	std::lock_guard<std::mutex> lock(mutex);
-	
+	if (!pBonDriver2) return false;
+
 	bool ret;
 	do {
 		ret = pBonDriver2->GetTsStream(ppDst, pdwSize, pdwRemain);
