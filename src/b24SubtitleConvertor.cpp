@@ -189,7 +189,14 @@ std::optional<uint32_t> parseCodepointAttribute(std::string value) {
         if (dash != std::string::npos) {
             value = value.substr(0, dash);
         }
-        return static_cast<uint32_t>(std::stoul(value, nullptr, 16));
+        if (value.empty()) {
+            return std::nullopt;
+        }
+        try {
+            return static_cast<uint32_t>(std::stoul(value, nullptr, 16));
+        } catch (const std::exception&) {
+            return std::nullopt;
+        }
     }
 
     size_t pos = 0;
