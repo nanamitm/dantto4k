@@ -262,9 +262,6 @@ void RemuxerHandler::writeStream(const MmtTlv::MmtStream& mmtStream, const MmtTl
     auto& packetIndex = mapPesPacketIndex[pid];
     auto& state = mapPesState[pid];
     size_t offset = 0;
-    if (state == PesState::Init && !mfuData.isFirstFragment) {
-        return;
-    }
     const bool beginNewPes =
         state != PesState::InFragment ||
         mfuData.isFirstFragment;
