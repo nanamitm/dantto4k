@@ -527,7 +527,10 @@ void RemuxerHandler::writeCaptionManagementData(uint64_t pts) {
         dataGroup.setGroupData(captionManagementData);
 
         B24::PESData pesData(dataGroup);
-        pesData.SetPESType(B24::PESData::PESType::Synchronized);
+        // 0x30 = caption (Synchronized), 0x31-0x37 = superimposed (Asynchronous)
+        const bool isSuperimposed = stream.second.getComponentTag() != 0x30;
+        pesData.SetPESType(isSuperimposed ? B24::PESData::PESType::Asynchronous
+                                          : B24::PESData::PESType::Synchronized);
 
         std::vector<uint8_t> packedPesData;
 
