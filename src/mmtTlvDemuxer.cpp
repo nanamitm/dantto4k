@@ -296,7 +296,7 @@ DemuxStatus MmtTlvDemuxer::demux(Common::ReadStream& stream) {
         }
     }
     catch (const std::out_of_range&) {
-        return DemuxStatus::NotValidTlv;
+        return DemuxStatus::Error;
     }
 
     return DemuxStatus::Ok;
