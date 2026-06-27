@@ -680,7 +680,7 @@ bool B24SubtitleConvertor::convert(const std::string& input, const std::unordere
         }
         captionStatementData.dataUnits.push_back({ unitDataByte });
 
-        if (div.begin && div.end) {
+        if (div.begin && div.end && *div.end > *div.begin) {
             std::vector<uint8_t> unitDataByte;
 
             uint64_t duration = (*div.end - *div.begin) / 100;
