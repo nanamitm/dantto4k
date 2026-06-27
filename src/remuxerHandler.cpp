@@ -1266,7 +1266,7 @@ void RemuxerHandler::onNit(const MmtTlv::Nit& nit) {
 }
 
 void RemuxerHandler::onNtp(const MmtTlv::NTPv4& ntp) {
-    writePcr(ntp.transmit_timestamp.toPcrValue() / 300 + 2700000);
+    writePcr(ntp.transmit_timestamp.toPcrValue() / 300);
 
     writeCaptionManagementData(ntp.transmit_timestamp.toPcrValue() / 300);
 }
