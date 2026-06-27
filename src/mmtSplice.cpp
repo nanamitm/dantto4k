@@ -503,9 +503,12 @@ void transformEntriesInPlace(std::vector<uint8_t>& table, const MptView& view,
                     if (seqOff != 0)
                         writeBe32(entry, static_cast<uint32_t>(be32(entry) + seqOff));
                     if (ntpDelta != 0) {
-                        const uint64_t shifted = be64(entry + 4) + static_cast<uint64_t>(ntpDelta);
-                        for (int i = 0; i < 8; i++)
-                            entry[4 + i] = static_cast<uint8_t>(shifted >> (8 * (7 - i)));
+                        const uint64_t ntp = be64(entry + 4);
+                        if (ntp != 0) {
+                            const uint64_t shifted = ntp + static_cast<uint64_t>(ntpDelta);
+                            for (int i = 0; i < 8; i++)
+                                entry[4 + i] = static_cast<uint8_t>(shifted >> (8 * (7 - i)));
+                        }
                     }
                 }
                 return;
