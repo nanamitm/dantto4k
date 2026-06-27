@@ -13,6 +13,17 @@ inline int convertFromBcd(uint64_t value) {
     return ((value >> 4) & 0xf) * 10 + (value & 0xf);
 }
 
+int daysInMonth(int year, int mon) {
+    // year absolute, mon 1-based
+    static const int days[] = { 0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+    if (mon < 1 || mon > 12) return 0;
+    if (mon == 2) {
+        const bool leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+        return leap ? 29 : 28;
+    }
+    return days[mon];
+}
+
 }
 
 void EITDecodeMjd(int i_mjd, int* p_y, int* p_m, int* p_d) {
@@ -58,7 +69,7 @@ bool isValidEITStartTime(const struct tm& t) {
     const int mon  = t.tm_mon + 1;
     return year >= 2000 && year <= 2100
         && mon  >= 1    && mon  <= 12
-        && t.tm_mday >= 1 && t.tm_mday <= 31
+        && t.tm_mday >= 1 && t.tm_mday <= daysInMonth(year, mon)
         && t.tm_hour >= 0 && t.tm_hour <= 23
         && t.tm_min  >= 0 && t.tm_min  <= 59
         && t.tm_sec  >= 0 && t.tm_sec  <= 59;
@@ -68,5 +79,5 @@ bool isValidMjdDate(int year, int mon, int mday) {
     // year is absolute (e.g. 2024), mon is 1-based
     return year >= 2000 && year <= 2100
         && mon  >= 1    && mon  <= 12
-        && mday >= 1    && mday <= 31;
+        && mday >= 1    && mday <= daysInMonth(year, mon);
 }
