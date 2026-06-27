@@ -197,7 +197,11 @@ DemuxStatus MmtTlvDemuxer::demux(Common::ReadStream& stream) {
             else {
                 const uint32_t expected = mmtStat->lastPacketSequenceNumber + 1;
                 if (expected != mmtp.packetSequenceNumber) {
-                    mmtStat->drop += mmtp.packetSequenceNumber - expected;
+                    if (mmtp.packetSequenceNumber > expected) {
+                        mmtStat->drop += mmtp.packetSequenceNumber - expected;
+                    } else {
+                        mmtStat->drop++;
+                    }
 
                     auto mmtStream = getStream(mmtp.packetId);
                     if (mmtStream) {
