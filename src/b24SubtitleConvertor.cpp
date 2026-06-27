@@ -545,21 +545,26 @@ bool B24SubtitleConvertor::convert(const std::string& input, const std::unordere
                 TTMLCssValueLength first = firstSpan->style.fontSize->first.getValue<TTMLCssValueLength>();
                 TTMLCssValueLength second = firstSpan->style.fontSize->second.getValue<TTMLCssValueLength>();
 
-                if (first.value == 144 && second.value == 144) {
+                // ARIB 4K TTML coordinate space: NSZ=144x144, MSZ=72x144, SSZ=72x72.
+                // MSZ is detected by ratio (first == second/2) to tolerate other resolutions.
+                const bool isSquare = (first.value == second.value);
+                const bool isMszRatio = (second.value > 0 && first.value * 2 == second.value);
+                const double refNsz = 144.0;
+                if (isSquare && second.value >= refNsz * 0.75) {
                     if (characterSize != B24ControlSet::NSZ) {
                         unitDataByte.push_back(B24ControlSet::NSZ);
                         characterSize = B24ControlSet::NSZ;
                     }
                     fontHeight = 240;
                 }
-                else if (first.value == 72 && second.value == 144) {
+                else if (isMszRatio) {
                     if (characterSize != B24ControlSet::MSZ) {
                         unitDataByte.push_back(B24ControlSet::MSZ);
                         characterSize = B24ControlSet::MSZ;
                     }
                     fontHeight = 240;
                 }
-                else if (first.value == 72 && second.value == 72) {
+                else if (isSquare && second.value < refNsz * 0.75) {
                     if (characterSize != B24ControlSet::SSZ) {
                         unitDataByte.push_back(B24ControlSet::SSZ);
                         characterSize = B24ControlSet::SSZ;
