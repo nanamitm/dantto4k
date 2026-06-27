@@ -469,7 +469,7 @@ namespace {
 int64_t usToNtpDelta(int64_t us)
 {
     const bool neg = us < 0;
-    const uint64_t mag = static_cast<uint64_t>(neg ? -us : us);
+    const uint64_t mag = neg ? (static_cast<uint64_t>(-(us + 1)) + 1) : static_cast<uint64_t>(us);
     const uint64_t ntp = ((mag / 1000000ULL) << 32) | ((mag % 1000000ULL) * 0xFFFFFFFFULL) / 1000000ULL;
     return neg ? -static_cast<int64_t>(ntp) : static_cast<int64_t>(ntp);
 }
