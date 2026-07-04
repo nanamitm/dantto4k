@@ -20,6 +20,9 @@
 
 #ifdef WIN32
 #include <Windows.h>
+#include <cstdio>
+#include <fcntl.h>
+#include <io.h>
 #endif
 
 namespace {
@@ -822,6 +825,17 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
+#ifdef WIN32
+    if (useStdin && _setmode(_fileno(stdin), _O_BINARY) == -1) {
+        std::cerr << "Unable to set stdin to binary mode" << std::endl;
+        return 1;
+    }
+    if (useStdout && _setmode(_fileno(stdout), _O_BINARY) == -1) {
+        std::cerr << "Unable to set stdout to binary mode" << std::endl;
+        return 1;
+    }
+#endif
+
     std::istream* inputStream;
     std::unique_ptr<std::ifstream> inputFs;
     if (useStdin) {
@@ -945,19 +959,25 @@ int main(int argc, char* argv[]) {
     }
 
     std::vector<uint8_t> inputBuffer;
+    std::vector<uint8_t> readBuffer(chunkSize);
     inputBuffer.reserve(chunkSize * 2);
     uint64_t totalConsumed = 0;
+    bool inputEnded = false;
     while (true) {
-        if (!useStdin && inputStream->eof()) {
-            break;
+        if (!inputEnded && inputBuffer.size() < chunkSize) {
+            inputStream->read(reinterpret_cast<char*>(readBuffer.data()), static_cast<std::streamsize>(readBuffer.size()));
+            std::streamsize bytesRead = inputStream->gcount();
+            if (bytesRead > 0) {
+                auto readSize = static_cast<size_t>(bytesRead);
+                inputBuffer.insert(inputBuffer.end(), readBuffer.data(), readBuffer.data() + readSize);
+            }
+            if (bytesRead == 0 && inputStream->eof()) {
+                inputEnded = true;
+            }
         }
 
-        size_t oldSize = inputBuffer.size();
-        if (oldSize < chunkSize) {
-            inputBuffer.resize(oldSize + chunkSize);
-            inputStream->read(reinterpret_cast<char*>(inputBuffer.data() + oldSize), chunkSize);
-            std::streamsize bytesRead = inputStream->gcount();
-            inputBuffer.resize(oldSize + bytesRead);
+        if (inputBuffer.empty() && inputEnded) {
+            break;
         }
 
         MmtTlv::Common::ReadStream stream(inputBuffer);
@@ -984,6 +1004,9 @@ int main(int argc, char* argv[]) {
         if (args.probeBitrate && args.probeBitrateSampleBytes > 0
                 && totalConsumed >= args.probeBitrateSampleBytes
                 && bitrateProbeHandler.hasData()) {
+            break;
+        }
+        if (inputEnded && consumed == 0) {
             break;
         }
     }
