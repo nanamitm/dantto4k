@@ -72,6 +72,16 @@ constexpr Gaiji GaijiTable[] = {
     {u8"\U00002015", u8"ー"},
 };
 
+constexpr Gaiji AribPuaToUnicodeMap[] = {
+    // Duplicate encoded characters (ARIB STD-B24 Version 6.2-E1, p. 104).
+    {u8"\U0000E182", u8"\U0000E2DA"},
+    {u8"\U0000260E", u8"\U0000E2FB"},
+    {u8"\U0000E28B", u8"\U00005E74"},
+    {u8"\U0000E28C", u8"\U00006708"},
+    {u8"\U0000E28D", u8"\U000065E5"},
+    {u8"\U0000E28E", u8"\U00005186"},
+};
+
 constexpr Gaiji jisX0201KatakanaTable[] = {
     { u8"｡", u8"。" },
     { u8"｢", u8"「" },
@@ -148,6 +158,10 @@ void replaceSequence(std::string& str, std::string_view sequence, const char* re
 }
 
 void convertGaiji(std::string& str) {
+    for (const auto& codepoint : AribPuaToUnicodeMap) {
+        replaceSequence(str, reinterpret_cast<const char*>(codepoint.find), reinterpret_cast<const char*>(codepoint.replacement));
+    }
+
     // Most fonts (including TVTest's own ARIB symbol font support) have no
     // glyph for these newer pictograms, so even with the bracket-text
     // conversion disabled we still strip them rather than leaving an
@@ -216,11 +230,20 @@ static std::unordered_map<std::string, std::string> aribEncodeCache;
 static std::mutex aribEncodeCacheMutex;
 constexpr size_t ARIB_ENCODE_CACHE_MAX_SIZE = 4096;
 
+static std::string makeCacheKey(std::string_view input, bool isCaption)
+{
+    std::string key;
+    key.reserve(input.size() + 1);
+    key.push_back(isCaption ? '\1' : '\0');
+    key.append(input);
+    return key;
+}
+
 const std::string aribEncode(std::string_view input, bool isCaption) {
-    std::string input_str{ input };
+    std::string cacheKey = makeCacheKey(input, isCaption);
     {
         std::lock_guard<std::mutex> lock(aribEncodeCacheMutex);
-        auto it = aribEncodeCache.find(input_str);
+        auto it = aribEncodeCache.find(cacheKey);
         if (it != aribEncodeCache.end()) {
             return it->second;
         }
@@ -241,7 +264,7 @@ const std::string aribEncode(std::string_view input, bool isCaption) {
         if (aribEncodeCache.size() >= ARIB_ENCODE_CACHE_MAX_SIZE) {
             aribEncodeCache.clear();
         }
-        aribEncodeCache.emplace(std::move(input_str), result);
+        aribEncodeCache.emplace(std::move(cacheKey), result);
     }
     return result;
 }
