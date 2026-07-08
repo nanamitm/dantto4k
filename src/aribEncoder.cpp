@@ -1962,5 +1962,3 @@ const AribEncoder::CharAlias AribEncoder::additionalSymbolAliases[] = {
 	additionalSymbolAlias(0x1F128, 94, 57),
 	additionalSymbolAlias(0x1F129, 94, 58),
 };
-
-const size_t AribEncoder::additionalSymbolAliasesCount = sizeof(AribEncoder::additionalSymbolAliases) / sizeof(AribEncoder::additionalSymbolAliases[0]);

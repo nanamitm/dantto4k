@@ -1,4 +1,5 @@
 ﻿#pragma once
+#include <cassert>
 #include <cstdint>
 #include <string>
 #include <codecvt>
@@ -86,19 +87,35 @@ private:
         const Row* rows;
     };
 
-    // Additional symbols that have a standard Unicode codepoint distinct from
-    // the PUA codepoint stored in additionalSymbolsRow (e.g. duplicate/round-trip
-    // encodings per ARIB STD-B62 Table D1-2). row/col are absolute 0-based ARIB
-    // table coordinates (spec row/col minus 1), so both forms resolve to the
-    // same broadcast position when encoding.
+    // A standard Unicode codepoint distinct from the PUA codepoint stored in a
+    // charset's Row table (e.g. duplicate/round-trip encodings per ARIB
+    // STD-B62 Table D1-2) that should resolve to the same broadcast position.
+    // row/col are absolute 0-based ARIB table coordinates, matching findResult.
     struct CharAlias {
         char32_t codepoint;
+        const Charset* charset;
         uint8_t row;
         uint8_t col;
     };
 
+    // specRow/specCol are the character's position in the ARIB spec's global
+    // 1-94 row / 1-94 col numbering; firstSpecRow is the spec row where
+    // `charset` begins. Row is computed via charset->rowStart, the same
+    // convention initializeCharToAribMap() uses for the primary tables below,
+    // so an alias and its charset's rowStart can't silently drift apart.
+    static constexpr CharAlias makeCharAlias(char32_t codepoint, const Charset& charset, uint8_t firstSpecRow, uint8_t specRow, uint8_t specCol) {
+        return {
+            codepoint,
+            &charset,
+            static_cast<uint8_t>(charset.rowStart + (specRow - firstSpecRow)),
+            static_cast<uint8_t>(specCol - 1)
+        };
+    }
+
+    static constexpr uint8_t kAdditionalSymbolsFirstSpecRow = 90;
+
     static constexpr CharAlias additionalSymbolAlias(char32_t codepoint, uint8_t specRow, uint8_t specCol) {
-        return { codepoint, static_cast<uint8_t>(specRow - 1), static_cast<uint8_t>(specCol - 1) };
+        return makeCharAlias(codepoint, additionalSymbols, kAdditionalSymbolsFirstSpecRow, specRow, specCol);
     }
 
     bool isCaption;
@@ -134,8 +151,7 @@ private:
     static const Charset additionalSymbols;
     static const uint8_t additionalSymbolsRowIndex[];
     static const Row additionalSymbolsRow[];
-    static const CharAlias additionalSymbolAliases[];
-    static const size_t additionalSymbolAliasesCount;
+    static const CharAlias additionalSymbolAliases[106];
 
     static inline const std::map<CharsetCode, const Charset*> mapCharset = {
         {alphanumeric.code, &alphanumeric},
@@ -537,9 +553,10 @@ private:
             }
         }
 
-        for (size_t i = 0; i < additionalSymbolAliasesCount; i++) {
-            const auto& alias = additionalSymbolAliases[i];
-            findResult result = { &additionalSymbols, alias.row, alias.col };
+        assert(additionalSymbols.rowStart + 1 == kAdditionalSymbolsFirstSpecRow);
+
+        for (const auto& alias : additionalSymbolAliases) {
+            findResult result = { alias.charset, alias.row, alias.col };
             charToAribMap[alias.codepoint].push_back(result);
         }
     }
