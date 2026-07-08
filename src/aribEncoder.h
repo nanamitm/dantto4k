@@ -86,6 +86,21 @@ private:
         const Row* rows;
     };
 
+    // Additional symbols that have a standard Unicode codepoint distinct from
+    // the PUA codepoint stored in additionalSymbolsRow (e.g. duplicate/round-trip
+    // encodings per ARIB STD-B62 Table D1-2). row/col are absolute 0-based ARIB
+    // table coordinates (spec row/col minus 1), so both forms resolve to the
+    // same broadcast position when encoding.
+    struct CharAlias {
+        char32_t codepoint;
+        uint8_t row;
+        uint8_t col;
+    };
+
+    static constexpr CharAlias additionalSymbolAlias(char32_t codepoint, uint8_t specRow, uint8_t specCol) {
+        return { codepoint, static_cast<uint8_t>(specRow - 1), static_cast<uint8_t>(specCol - 1) };
+    }
+
     bool isCaption;
     std::array<CharsetCode, 4> graphic;
     bool isGR{false};
@@ -119,6 +134,8 @@ private:
     static const Charset additionalSymbols;
     static const uint8_t additionalSymbolsRowIndex[];
     static const Row additionalSymbolsRow[];
+    static const CharAlias additionalSymbolAliases[];
+    static const size_t additionalSymbolAliasesCount;
 
     static inline const std::map<CharsetCode, const Charset*> mapCharset = {
         {alphanumeric.code, &alphanumeric},
@@ -518,6 +535,12 @@ private:
                     charToAribMap[c].push_back(result);
                 }
             }
+        }
+
+        for (size_t i = 0; i < additionalSymbolAliasesCount; i++) {
+            const auto& alias = additionalSymbolAliases[i];
+            findResult result = { &additionalSymbols, alias.row, alias.col };
+            charToAribMap[alias.codepoint].push_back(result);
         }
     }
 
