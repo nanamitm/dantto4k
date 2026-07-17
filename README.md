@@ -15,6 +15,9 @@ Usage:
                                 Specify the smart card reader to use
       --customWinscardDLL arg   Specify the path to a winscard.dll
       --disableADTSConversion   Disable ADTS conversion
+      --frontend-descrambled    Assume the input stream was already
+                                descrambled by the frontend, and only
+                                remux MMT/TLV to MPEG-2 TS
       --decode-mmts             Output ACAS-decrypted MMT/TLV instead of MPEG-2 TS
       --write-mmtsmap           Write an .mmtsmap sidecar for --decode-mmts output
       --write-mmtsmap-only      Scan input and write only an .mmtsmap sidecar
@@ -23,6 +26,9 @@ Usage:
       --no-stats                Disable packet statistics
       --help                    Show help
 ```
+
+フロントエンド側で既に復号済みの MMTS を MPEG-2 TS に変換するだけの場合は、
+`--frontend-descrambled` を指定します。このモードではスマートカードを初期化しません。
 
 復号済み MMTS/TLV をファイルへ書き出す場合は `--decode-mmts` を指定します。
 

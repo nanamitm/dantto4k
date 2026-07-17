@@ -117,6 +117,10 @@ void MmtTlvDemuxer::setCasHandler(std::unique_ptr<CasHandler> handler) {
     casHandler = std::move(handler);
 }
 
+void MmtTlvDemuxer::setAssumeDescrambled(bool value) {
+    assumeDescrambled = value;
+}
+
 DemuxStatus MmtTlvDemuxer::demux(Common::ReadStream& stream) {
     size_t cur = stream.getPos();
 
@@ -223,26 +227,28 @@ DemuxStatus MmtTlvDemuxer::demux(Common::ReadStream& stream) {
             if (mmtp.extensionHeaderScrambling.has_value()) {
                 if (mmtp.extensionHeaderScrambling->encryptionFlag == EncryptionFlag::ODD ||
                     mmtp.extensionHeaderScrambling->encryptionFlag == EncryptionFlag::EVEN) {
-                    if (!casHandler) {
-                        if (decodedDumpErrorCallback) {
-                            decodedDumpErrorCallback();
+                    if (!assumeDescrambled) {
+                        if (!casHandler) {
+                            if (decodedDumpErrorCallback) {
+                                decodedDumpErrorCallback();
+                            }
+                            if (decodedDumpCallback) {
+                                auto packet = serializeTlvPacket(static_cast<uint8_t>(TlvPacketType::HeaderCompressedIpPacket), tlv.getData());
+                                decodedDumpCallback(packet.data(), packet.size());
+                            }
+                            return DemuxStatus::WattingForEcm;
                         }
-                        if (decodedDumpCallback) {
-                            auto packet = serializeTlvPacket(static_cast<uint8_t>(TlvPacketType::HeaderCompressedIpPacket), tlv.getData());
-                            decodedDumpCallback(packet.data(), packet.size());
+                        if (!casHandler->decrypt(mmtp)) {
+                            mmtStat->outputDrop++;
+                            if (decodedDumpErrorCallback) {
+                                decodedDumpErrorCallback();
+                            }
+                            if (decodedDumpCallback) {
+                                auto packet = serializeTlvPacket(static_cast<uint8_t>(TlvPacketType::HeaderCompressedIpPacket), tlv.getData());
+                                decodedDumpCallback(packet.data(), packet.size());
+                            }
+                            return DemuxStatus::WattingForEcm;
                         }
-                        return DemuxStatus::WattingForEcm;
-                    }
-                    if (!casHandler->decrypt(mmtp)) {
-                        mmtStat->outputDrop++;
-                        if (decodedDumpErrorCallback) {
-                            decodedDumpErrorCallback();
-                        }
-                        if (decodedDumpCallback) {
-                            auto packet = serializeTlvPacket(static_cast<uint8_t>(TlvPacketType::HeaderCompressedIpPacket), tlv.getData());
-                            decodedDumpCallback(packet.data(), packet.size());
-                        }
-                        return DemuxStatus::WattingForEcm;
                     }
                 }
             }

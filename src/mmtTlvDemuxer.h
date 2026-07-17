@@ -50,6 +50,7 @@ public:
 
 	void setDemuxerHandler(DemuxerHandler& demuxerHandler);
 	void setCasHandler(std::unique_ptr<CasHandler> handler);
+	void setAssumeDescrambled(bool value);
 
 	// When set, each decoded (ACAS-decrypted) TLV packet is written to this stream.
 	// Non-scrambled packets are passed through as-is.
@@ -108,6 +109,7 @@ private:
 	std::map<uint16_t, std::vector<uint8_t>> mfuData;
 	std::unique_ptr<CasHandler> casHandler;
 	DemuxerHandler* demuxerHandler = nullptr;
+	bool assumeDescrambled = false;
 	MmtTlvStatistics statistics;
 	DecodedDumpCallback decodedDumpCallback;
 	std::function<void()> decodedDumpErrorCallback;
