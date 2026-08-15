@@ -76,6 +76,21 @@ int convertRunningStatus(int runningStatus) {
     }
 }
 
+// Asset types that MmtTlvDemuxer::processMmtPackageTable() assigns a stream
+// index to. Keep in sync with it: the PMT builder walks the MPT assets in the
+// same order and must consume indices identically.
+bool isIndexedAssetType(uint32_t assetType) {
+    switch (assetType) {
+    case MmtTlv::AssetType::hev1:
+    case MmtTlv::AssetType::mp4a:
+    case MmtTlv::AssetType::stpp:
+    case MmtTlv::AssetType::aapp:
+        return true;
+    default:
+        return false;
+    }
+}
+
 int assetType2streamType(uint32_t assetType) {
     int stream_type = 0;
     switch (assetType) {
@@ -1023,31 +1038,41 @@ void RemuxerHandler::onMpt(const MmtTlv::Mpt& mpt) {
 
     int streamIndex = 0;
     for (auto& asset : mpt.assets) {
-        for (int i = 0; i < asset.locationCount; i++) {
-            if (asset.locationInfos[i].locationType == 0) {
-                const MmtTlv::MmtStream* mmtStream = demuxer.getStreamByIdx(streamIndex);
+        for (const auto& locationInfo : asset.locationInfos) {
+            if (locationInfo.locationType == 0) {
+                // Stream indices must be consumed exactly like
+                // MmtTlvDemuxer::processMmtPackageTable() hands them out, or every
+                // asset after the first mismatch is looked up as the wrong stream
+                // and lands in the PMT with someone else's PID and component tag.
+                // The demuxer indexes these four asset types and nothing else, so
+                // take the index up front and let the checks below bail out freely.
+                if (!isIndexedAssetType(asset.assetType)) {
+                    continue;
+                }
+
+                const int assetStreamIndex = streamIndex++;
+                const MmtTlv::MmtStream* mmtStream = demuxer.getStreamByIdx(static_cast<uint16_t>(assetStreamIndex));
                 if (!mmtStream) {
                     continue;
                 }
 
                 if (mmtStream->getComponentTag() == -1) {
-                    streamIndex++;
                     continue;
                 }
 
                 if (mmtStream->getMpeg2PacketId() > 0x1FFE) {
-                    streamIndex++;
                     continue;
                 }
 
                 if (asset.assetType == MmtTlv::AssetType::stpp &&
                     (mmtStream->getComponentTag() < 0x30 || mmtStream->getComponentTag() > 0x37)) {
-                    streamIndex++;
                     continue;
                 }
 
                 int streamType = assetType2streamType(asset.assetType);
                 if (streamType == 0) {
+                    // aapp: indexed by the demuxer, but has no MPEG-2 TS
+                    // equivalent, so it is not carried into the PMT.
                     continue;
                 }
 
@@ -1109,7 +1134,6 @@ void RemuxerHandler::onMpt(const MmtTlv::Mpt& mpt) {
                 }
 
                 tsPmt.streams[mmtStream->getMpeg2PacketId()] = stream;
-                streamIndex++;
             }
         }
     }
