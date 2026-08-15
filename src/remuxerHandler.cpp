@@ -405,6 +405,19 @@ void RemuxerHandler::writeSubtitle(const MmtTlv::MmtStream& mmtStream, const B24
         " lastPcr=" + std::to_string(lastPcr) +
         " programStartTime=" + std::to_string(programStartTime) +
         " pesData.size=" + std::to_string(subtitle.pesData.size()));
+    // calcPts() returns 0 when the TTML carried no begin time, i.e. the cue has
+    // no timing information at all. It must never reach the calibration below:
+    // anchoring on a zero pts locks subtitlePtsOffset90k onto the entire PCR
+    // value (~56 years in 90kHz ticks), which then pushes every later caption of
+    // the program far outside the timeline where no player will render it. Such
+    // cues do turn up in practice - at an event boundary the caption asset can be
+    // handed over to another source that emits an empty, untimed cue first.
+    // The pts==0 check further down runs after the offset was applied, so it
+    // cannot catch this.
+    if (pts == 0) {
+        subtitleDebugLog("writeSubtitle: cue has no begin time, skipping");
+        return;
+    }
     // calcPts() comes from the EIT program start (whole-second resolution and
     // offset from the actual stream clock by the scheduled-vs-broadcast gap), so
     // it is consistently behind the PCR. The old code snapped every caption
@@ -413,7 +426,13 @@ void RemuxerHandler::writeSubtitle(const MmtTlv::MmtStream& mmtStream, const B24
     // into the next one. Instead calibrate one offset per program (recomputed
     // when programStartTime changes) and apply it to every caption, which keeps
     // the TTML spacing intact while aligning captions to the stream clock.
-    const bool needsCalibration = !subtitleOffsetCalibrated || programStartTime != subtitleOffsetProgramStart;
+    // A different asset means a different caption source, and therefore a
+    // potentially different time base, even while the EIT still reports the same
+    // program - so recalibrate on a stream change as well.
+    const uint32_t streamIndex = mmtStream.getStreamIndex();
+    const bool needsCalibration = !subtitleOffsetCalibrated ||
+        programStartTime != subtitleOffsetProgramStart ||
+        streamIndex != subtitleOffsetStreamIndex;
     if (needsCalibration && lastWrittenPcr == 0) {
         // No PCR/NTP-derived media clock has been established yet (lastPcr is
         // still its zero-initialized default). Calibrating against it now
@@ -432,6 +451,7 @@ void RemuxerHandler::writeSubtitle(const MmtTlv::MmtStream& mmtStream, const B24
         subtitlePtsOffset90k = static_cast<int64_t>(pcr90) - static_cast<int64_t>(pts);
         subtitleOffsetCalibrated = true;
         subtitleOffsetProgramStart = programStartTime;
+        subtitleOffsetStreamIndex = streamIndex;
     }
     int64_t adjustedPts = static_cast<int64_t>(pts) + subtitlePtsOffset90k;
     if (adjustedPts < 0)
@@ -1288,4 +1308,5 @@ void RemuxerHandler::clear() {
     subtitlePtsOffset90k = 0;
     subtitleOffsetCalibrated = false;
     subtitleOffsetProgramStart = 0;
+    subtitleOffsetStreamIndex = 0;
 }

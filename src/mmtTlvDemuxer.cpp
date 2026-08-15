@@ -38,6 +38,16 @@ namespace MmtTlv {
 
 namespace {
 
+// A packet_id can carry more than one independent packet_sequence_number series
+// over the life of a recording: at an event boundary the broadcaster may hand an
+// asset (typically the caption asset, which is idle between programs) over to a
+// different source that keeps its own counter. Such a hand-over shows up as a
+// huge jump in either direction, whereas real packet loss on a continuously
+// transmitted asset is a small gap. Treat anything beyond this distance as a
+// counter resync rather than as lost packets, so the drop statistics are not
+// inflated by tens of thousands of phantom drops.
+constexpr uint32_t sequenceResyncThreshold = 1000;
+
 // Re-serialize a CompressedIPPacket header back to bytes.
 std::vector<uint8_t> serializeCompressedIP(const CompressedIPPacket& cip)
 {
@@ -201,10 +211,19 @@ DemuxStatus MmtTlvDemuxer::demux(Common::ReadStream& stream) {
             else {
                 const uint32_t expected = mmtStat->lastPacketSequenceNumber + 1;
                 if (expected != mmtp.packetSequenceNumber) {
-                    if (mmtp.packetSequenceNumber > expected) {
-                        mmtStat->drop += mmtp.packetSequenceNumber - expected;
-                    } else {
-                        mmtStat->drop++;
+                    const uint32_t distance = mmtp.packetSequenceNumber > expected ?
+                        mmtp.packetSequenceNumber - expected :
+                        expected - mmtp.packetSequenceNumber;
+
+                    // Only count as lost packets when the gap is plausible for a
+                    // continuously transmitted asset; a distant sequence number
+                    // means the series itself changed (see sequenceResyncThreshold).
+                    if (distance <= sequenceResyncThreshold) {
+                        if (mmtp.packetSequenceNumber > expected) {
+                            mmtStat->drop += mmtp.packetSequenceNumber - expected;
+                        } else {
+                            mmtStat->drop++;
+                        }
                     }
 
                     auto mmtStream = getStream(mmtp.packetId);
