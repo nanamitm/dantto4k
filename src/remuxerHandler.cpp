@@ -738,8 +738,10 @@ void RemuxerHandler::onMhEit(const MmtTlv::MhEit& mhEit) {
             if (!mhEvent) {
                 continue;
             }
-            std::tm startTime = EITConvertStartTime(mhEvent->startTime);
-            programStartTime = static_cast<uint64_t>(std::mktime(&startTime));
+            uint64_t startTime{};
+            if (EITConvertStartTimeToUnixTime(mhEvent->startTime, &startTime)) {
+                programStartTime = startTime;
+            }
             break;
         }
     }
