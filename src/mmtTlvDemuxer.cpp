@@ -163,11 +163,25 @@ DemuxStatus MmtTlvDemuxer::demux(Common::ReadStream& stream) {
         case TlvPacketType::Ipv4Packet:
         {
             statistics.tlvIpv4PacketCount++;
+            // Pass through as-is to decoded dump.
+            if (decodedDumpCallback) {
+                auto packet = serializeTlvPacket(static_cast<uint8_t>(TlvPacketType::Ipv4Packet), tlv.getData());
+                decodedDumpCallback(packet.data(), packet.size());
+            }
             break;
         }
         case TlvPacketType::Ipv6Packet:
         {
             statistics.tlvIpv6PacketCount++;
+            // Pass through as-is to decoded dump. These packets are never
+            // scrambled, so there is nothing to decrypt - but they carry the
+            // NTP clock, and dropping them left a dumped stream with no time
+            // reference at all: onNtp() never fires when the dump is read back,
+            // so caption timing and PCR generation lose their anchor.
+            if (decodedDumpCallback) {
+                auto packet = serializeTlvPacket(static_cast<uint8_t>(TlvPacketType::Ipv6Packet), tlv.getData());
+                decodedDumpCallback(packet.data(), packet.size());
+            }
 
             IPv6Header ipv6(false);
             if (!ipv6.unpack(tlvDataStream)) {
