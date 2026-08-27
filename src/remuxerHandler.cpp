@@ -491,9 +491,22 @@ void RemuxerHandler::writeSubtitle(const MmtTlv::MmtStream& mmtStream, const B24
 
     // Ensure management data is sent before statement data so that
     // libaribcaption has the language info it needs to accept statement
-    // packets.
+    // packets. Upstream drives writeCaptionManagementData() from onNtp()
+    // alone, but NTP packets do not reach us on the BonDriver path (the
+    // captures carry only header-compressed MMTP, no UDP port 123), so this
+    // is the only source of management data there.
+    //
+    // Clamp to the media clock before feeding the throttle. A cue whose TTML
+    // begin runs ahead of the clock would otherwise push
+    // lastCaptionManagementDataPts into the future, suppressing the 0.5 s
+    // cadence until the clock caught up - and management data belongs at the
+    // current time anyway, not at a future caption's.
     if (pts) {
-        writeCaptionManagementData(*pts);
+        uint64_t managementPts = *pts;
+        if (const uint64_t clockPts = lastPcr / 300; clockPts != 0) {
+            managementPts = std::min(managementPts, clockPts);
+        }
+        writeCaptionManagementData(managementPts);
     }
 
     std::vector<uint8_t> pesOutput;
