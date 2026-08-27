@@ -1,10 +1,13 @@
 #pragma once
 #include "demuxerHandler.h"
-#include "b24SubtitleConvertor.h"
+#include "b24SubtitleConverter.h"
+#include "ttml/drcs.h"
 #include "damt.h"
 #include <tsduck.h>
+#include <optional>
 #include <unordered_map>
 #include <functional>
+#include <string>
 
 namespace StreamType {
 
@@ -90,7 +93,8 @@ private:
 
 	void writeStream(const MmtTlv::MmtStream& mmtStream, const MmtTlv::MfuData& mfuData, const std::vector<uint8_t>& data);
 	void writePcr(uint64_t pcrBase90k);
-	void writeSubtitle(const MmtTlv::MmtStream& mmtStream, const B24SubtitleOutput& subtitle);
+	void writeSubtitle(const MmtTlv::MmtStream& mmtStream, const B24SubtitleOutput& subtitle,
+		std::optional<uint64_t> pts = std::nullopt);
 	void writeCaptionManagementData(uint64_t pts);
 	void convertAndWriteSubtitle(const MmtTlv::MmtStream& mmtStream, const std::string& ttml);
 	MmtTlv::MmtTlvDemuxer& demuxer;
@@ -100,25 +104,14 @@ private:
 	std::unordered_map<uint16_t, std::vector<uint8_t>> mapPesPendingData;
 	std::unordered_map<uint16_t, uint32_t> mapPesPacketIndex;
 	std::unordered_map<uint16_t, PesState> mapPesState;
-	std::unordered_map<uint32_t, std::unordered_map<uint32_t, B24DrcsGlyph>> mapSubtitleDrcsGlyphs;
+	std::unordered_map<uint32_t, std::unordered_map<uint32_t, arib::ttml::DrcsGlyph>> mapSubtitleDrcsGlyphs;
 	std::unordered_map<uint32_t, std::vector<std::string>> mapPendingSubtitleTtml;
 	uint64_t adtsDropCount{0};
 	int tsid{-1};
 	uint64_t lastPcr{};
 	uint64_t lastWrittenPcr{};
 	uint64_t lastCaptionManagementDataPts{};
-	uint64_t programStartTime{};
 	int64_t ptsOffset90k{0};
-	// Caption timing: calcPts() is derived from the EIT program start, which is
-	// offset from the actual stream clock. Rather than snapping each caption to
-	// the PCR (which re-spaces them and makes fixed-duration captions overlap),
-	// calibrate one offset per program (recomputed when programStartTime or the
-	// source asset changes) and shift every caption by it, preserving the TTML
-	// relative spacing.
-	int64_t subtitlePtsOffset90k{0};
-	bool subtitleOffsetCalibrated{false};
-	uint64_t subtitleOffsetProgramStart{0};
-	uint32_t subtitleOffsetStreamIndex{0};
 	inline static const std::vector<uint8_t> ccis = { 0x43, 0x43, 0x49, 0x53, 0x01, 0x3F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, };
 	ts::DuckContext duck;
 

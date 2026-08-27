@@ -73,10 +73,10 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <IncludePath>$(SolutionDir)..\thirdparty\asio\asio\include;$(IncludePath)</IncludePath>
+    <IncludePath>$(SolutionDir)..\src;$(SolutionDir)..\thirdparty\asio\asio\include;$(IncludePath)</IncludePath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <IncludePath>$(SolutionDir)..\thirdparty\asio\asio\include;$(IncludePath)</IncludePath>
+    <IncludePath>$(SolutionDir)..\src;$(SolutionDir)..\thirdparty\asio\asio\include;$(IncludePath)</IncludePath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <TargetName>BonDriver_dantto4k</TargetName>
@@ -178,12 +178,10 @@
     <ClCompile Include="../src/mhSimpleApplicationLocationDescriptor.cpp" />
     <ClCompile Include="../src/mhTransportProtocolDescriptor.cpp" />
     <ClCompile Include="../src/mpuApplicationProcessor.cpp" />
-    <ClCompile Include="../src/aribUtil.cpp" />
     <ClCompile Include="../src/mpuAudioProcessor.cpp" />
     <ClCompile Include="../src/acasCard.cpp" />
     <ClCompile Include="../src/adtsConverter.cpp" />
     <ClCompile Include="../src/b24Color.cpp" />
-    <ClCompile Include="../src/b24SubtitleConvertor.cpp" />
     <ClCompile Include="../src/bonTuner.cpp" />
     <ClCompile Include="../src/caMessage.cpp" />
     <ClCompile Include="../src/casProxyClient.cpp" />
@@ -219,7 +217,6 @@
     <ClCompile Include="../src/timeUtil.cpp" />
     <ClCompile Include="../src/tlvDescriptorFactory.cpp" />
     <ClCompile Include="../src/tlvTableFactory.cpp" />
-    <ClCompile Include="../src/ttml.cpp" />
     <ClCompile Include="../src/mpuVideoProcessor.cpp" />
     <ClCompile Include="../src/m2SectionMessage.cpp" />
     <ClCompile Include="../src/m2ShortSectionMessage.cpp" />
@@ -267,7 +264,17 @@
     <ClCompile Include="../src/transmissionControlSignal.cpp" />
     <ClCompile Include="../src/mpuSubtitleProcessor.cpp" />
     <ClCompile Include="../src/videoComponentDescriptor.cpp" />
-    <ClCompile Include="../src/aribEncoder.cpp" />
+    <ClCompile Include="../src/aribTextEncoder.cpp" />
+    <ClCompile Include="../src/aribCharsetEncoder.cpp" />
+    <ClCompile Include="../src/aribCharsetTables.cpp" />
+    <ClCompile Include="../src/additionalAribSubtitleInfo.cpp" />
+    <ClCompile Include="../src/b24SubtitleConverter.cpp" />
+    <ClCompile Include="../src/ntpTimestamp.cpp" />
+    <ClCompile Include="../src/ttml/b24_converter.cpp" />
+    <ClCompile Include="../src/ttml/drcs.cpp" />
+    <ClCompile Include="../src/ttml/parser.cpp" />
+    <ClCompile Include="../src/ttml/resolver.cpp" />
+    <ClCompile Include="../src/ttml/style.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="../src/accessControlDescriptor.h" />
@@ -285,13 +292,11 @@
     <ClInclude Include="../src/mhSimpleApplicationLocationDescriptor.h" />
     <ClInclude Include="../src/mhTransportProtocolDescriptor.h" />
     <ClInclude Include="../src/mpuApplicationProcessor.h" />
-    <ClInclude Include="../src/aribUtil.h" />
     <ClInclude Include="../src/mpuAudioProcessor.h" />
     <ClInclude Include="../src/acasCard.h" />
     <ClInclude Include="../src/adtsConverter.h" />
     <ClInclude Include="../src/b24Color.h" />
     <ClInclude Include="../src/b24ControlSet.h" />
-    <ClInclude Include="../src/b24SubtitleConvertor.h" />
     <ClInclude Include="../src/bonDriverContext.h" />
     <ClInclude Include="../src/bonTuner.h" />
     <ClInclude Include="../src/caMessage.h" />
@@ -334,7 +339,6 @@
     <ClInclude Include="../src/timeUtil.h" />
     <ClInclude Include="../src/tlvDescriptorFactory.h" />
     <ClInclude Include="../src/tlvTableFactory.h" />
-    <ClInclude Include="../src/ttml.h" />
     <ClInclude Include="../src/mpuVideoProcessor.h" />
     <ClInclude Include="../src/IBonDriver.h" />
     <ClInclude Include="../src/ip.h" />
@@ -391,9 +395,23 @@
     <ClInclude Include="../src/mmtDescriptorBase.h" />
     <ClInclude Include="../src/mmtTlvDemuxer.h" />
     <ClInclude Include="../src/aesCtrCipher.h" />
-    <ClInclude Include="../src/aribEncoder.h" />
     <ClInclude Include="../src/progressReporter.h" />
     <ClInclude Include="../src/sha256.h" />
+    <ClInclude Include="../src/aribTextEncoder.h" />
+    <ClInclude Include="../src/aribCharsetEncoder.h" />
+    <ClInclude Include="../src/aribCharsetTables.h" />
+    <ClInclude Include="../src/additionalAribSubtitleInfo.h" />
+    <ClInclude Include="../src/b24SubtitleConverter.h" />
+    <ClInclude Include="../src/ntpTimestamp.h" />
+    <ClInclude Include="../src/ttml/ast.h" />
+    <ClInclude Include="../src/ttml/b24_converter.h" />
+    <ClInclude Include="../src/ttml/drcs.h" />
+    <ClInclude Include="../src/ttml/parser.h" />
+    <ClInclude Include="../src/ttml/resolved.h" />
+    <ClInclude Include="../src/ttml/resolver.h" />
+    <ClInclude Include="../src/ttml/string_utils.h" />
+    <ClInclude Include="../src/ttml/style.h" />
+    <ClInclude Include="../src/ttml/sync_mode.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

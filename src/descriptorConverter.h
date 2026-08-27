@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "accessControlDescriptor.h"
 #include "contentCopyControlDescriptor.h"
 #include "mhAudioComponentDescriptor.h"
@@ -21,8 +21,7 @@
 #include "serviceListDescriptor.h"
 #include "videoComponentDescriptor.h"
 #include "mhServiceDescriptor.h"
-#include "aribUtil.h"
-#include "timeUtil.h"
+#include "aribTextEncoder.h"
 #include "timeUtil.h"
 #include "mhApplicationDescriptor.h"
 
@@ -43,8 +42,8 @@ struct DescriptorConverter;
 template <>
 struct DescriptorConverter<MmtTlv::MhShortEventDescriptor> {
     static std::optional<std::vector<uint8_t>> convert(const MmtTlv::MhShortEventDescriptor& mmtDescriptor) {
-        std::string eventNameBlock = aribEncode(mmtDescriptor.eventName);
-        std::string textBlock = aribEncode(mmtDescriptor.text);
+        std::string eventNameBlock = arib::text::encode(mmtDescriptor.eventName);
+        std::string textBlock = arib::text::encode(mmtDescriptor.text);
 
         if (eventNameBlock.size() > 257) {
             return std::nullopt;
@@ -98,7 +97,7 @@ struct DescriptorConverter<MmtTlv::MhShortEventDescriptor> {
 template <>
 struct DescriptorConverter<MmtTlv::MhExtendedEventDescriptor> {
     static std::optional<std::vector<uint8_t>> convert(const MmtTlv::MhExtendedEventDescriptor& mmtDescriptor) {
-        std::string textBlock = aribEncode(mmtDescriptor.textChar);
+        std::string textBlock = arib::text::encode(mmtDescriptor.textChar);
 
         if (textBlock.size() > 255) {
             return std::nullopt;
@@ -115,8 +114,8 @@ struct DescriptorConverter<MmtTlv::MhExtendedEventDescriptor> {
 
         size_t itemsLength = 0;
         for (const auto& item : mmtDescriptor.entries) {
-            std::string itemDescriptionCharBlock = aribEncode(item.itemDescriptionChar);
-            std::string itemCharBlock = aribEncode(item.itemChar);
+            std::string itemDescriptionCharBlock = arib::text::encode(item.itemDescriptionChar);
+            std::string itemCharBlock = arib::text::encode(item.itemChar);
 
             if (itemDescriptionCharBlock.size() > 255) {
                 return std::nullopt;
@@ -169,6 +168,8 @@ struct DescriptorConverter<MmtTlv::MhExtendedEventDescriptor> {
                 memcpy(&tsDescriptor[7 + pos], aribItemChars[i].data(), aribItemChars[i].size());
                 pos += aribItemChars[i].size();
             }
+
+            i++;
         }
 
         tsDescriptor[7 + pos] = static_cast<uint8_t>(textBlock.size());
@@ -200,7 +201,7 @@ struct DescriptorConverter<MmtTlv::MhAudioComponentDescriptor> {
         tsDescriptor.sampling_rate = mmtDescriptor.samplingRate;
         tsDescriptor.ISO_639_language_code = ts::UString::FromUTF8(mmtDescriptor.language1);
 
-        std::string textBlock = aribEncode(mmtDescriptor.text);
+        std::string textBlock = arib::text::encode(mmtDescriptor.text);
         tsDescriptor.text = ts::UString::FromUTF8(reinterpret_cast<const char*>(textBlock.data()), textBlock.size());
         return tsDescriptor;
     }
@@ -214,7 +215,7 @@ struct DescriptorConverter<MmtTlv::VideoComponentDescriptor> {
         tsDescriptor.component_type = convertVideoComponentType(mmtDescriptor.videoResolution, mmtDescriptor.videoAspectRatio);
         tsDescriptor.language_code = ts::UString::FromUTF8(mmtDescriptor.language);
 
-        std::string textBlock = aribEncode(mmtDescriptor.text);
+        std::string textBlock = arib::text::encode(mmtDescriptor.text);
         tsDescriptor.text = ts::UString::FromUTF8(reinterpret_cast<const char*>(textBlock.data()), textBlock.size());
         return tsDescriptor;
     }
@@ -302,16 +303,18 @@ struct DescriptorConverter<MmtTlv::MhSeriesDescriptor> {
             struct tm tm;
             EITDecodeMjd(mmtDescriptor.expireDate, &tm.tm_year, &tm.tm_mon, &tm.tm_mday);
 
-            if (!isValidMjdDate(tm.tm_year, tm.tm_mon, tm.tm_mday)) {
+            try {
+                tsDescriptor.expire_date = ts::Time(tm.tm_year, tm.tm_mon, tm.tm_mday, 0, 0);
+            }
+            catch (const ts::Time::TimeError&) {
                 return {};
             }
-            tsDescriptor.expire_date = ts::Time(tm.tm_year, tm.tm_mon, tm.tm_mday, 0, 0);
         }
 
         tsDescriptor.episode_number = mmtDescriptor.episodeNumber;
         tsDescriptor.last_episode_number = mmtDescriptor.lastEpisodeNumber;
 
-        std::string seriesNameBlock = aribEncode(mmtDescriptor.seriesNameChar);
+        std::string seriesNameBlock = arib::text::encode(mmtDescriptor.seriesNameChar);
         tsDescriptor.series_name = ts::UString::FromUTF8(reinterpret_cast<const char*>(seriesNameBlock.data()), seriesNameBlock.size());
 
         return tsDescriptor;
@@ -352,7 +355,7 @@ struct DescriptorConverter<MmtTlv::MultimediaServiceInformationDescriptor> {
         if (mmtDescriptor.dataComponentId == 0x0020) {
             tsDescriptor.ISO_639_language_code = ts::UString::FromUTF8(mmtDescriptor.language);
 
-            std::string textBlock = aribEncode(mmtDescriptor.text);
+            std::string textBlock = arib::text::encode(mmtDescriptor.text);
             tsDescriptor.text = ts::UString::FromUTF8(reinterpret_cast<const char*>(textBlock.data()), textBlock.size());
         }
 
@@ -368,8 +371,8 @@ struct DescriptorConverter<MmtTlv::MultimediaServiceInformationDescriptor> {
 template <>
 struct DescriptorConverter<MmtTlv::MhServiceDescriptor> {
     static std::optional<std::vector<uint8_t>> convert(const MmtTlv::MhServiceDescriptor& mmtDescriptor) {
-        std::string serviceProviderName = aribEncode(mmtDescriptor.serviceProviderName);
-        std::string serviceName = aribEncode(mmtDescriptor.serviceName);
+        std::string serviceProviderName = arib::text::encode(mmtDescriptor.serviceProviderName);
+        std::string serviceName = arib::text::encode(mmtDescriptor.serviceName);
 
         size_t descriptorLength = 1 // service_type
             + 1 // service_provider_name_length
@@ -388,7 +391,7 @@ struct DescriptorConverter<MmtTlv::MhServiceDescriptor> {
         MmtTlv::Common::WriteStream s;
         s.put8U(0x48); // descriptor_tag
         s.put8U(static_cast<uint8_t>(descriptorLength)); // descriptor_length
-        s.put8U(mmtDescriptor.serviceType); // service_type
+        s.put8U(1); // service_type
         s.put8U(static_cast<uint8_t>(serviceProviderName.size())); // service_provider_name_length
         if (serviceProviderName.size()) {
             s.write(serviceProviderName); // service_provider_name
@@ -416,7 +419,7 @@ struct DescriptorConverter<MmtTlv::MhLogoTransmissionDescriptor> {
             tsDescriptor.logo_id = mmtDescriptor.logoId;
         }
         else if (mmtDescriptor.logoTransmissionType == 0x03) {
-            std::string logoCharBlock = aribEncode(mmtDescriptor.logoChar);
+            std::string logoCharBlock = arib::text::encode(mmtDescriptor.logoChar);
             tsDescriptor.logo_char = ts::UString::FromUTF8(reinterpret_cast<const char*>(logoCharBlock.data()), logoCharBlock.size());
         }
         return tsDescriptor;
@@ -450,7 +453,7 @@ struct DescriptorConverter<MmtTlv::AccessControlDescriptor> {
 template <>
 struct DescriptorConverter<MmtTlv::NetworkNameDescriptor> {
     static std::optional<std::vector<uint8_t>> convert(const MmtTlv::NetworkNameDescriptor& mmtDescriptor) {
-        std::string networkName = aribEncode(mmtDescriptor.networkName);
+        std::string networkName = arib::text::encode(mmtDescriptor.networkName);
         size_t descriptorLength = networkName.size();
 
         if (descriptorLength > 255) {

@@ -38,8 +38,11 @@
 #include "timeUtil.h"
 #include "config.h"
 #include "ntp.h"
+#include "b24SubtitleConverter.h"
+#include "ttml/drcs.h"
+#include <algorithm>
+#include <atomic>
 #include <cstdio>
-#include "b24SubtitleConvertor.h"
 #include <fstream>
 #include <mutex>
 
@@ -183,6 +186,22 @@ void RemuxerHandler::onAudioData(const MmtTlv::MmtStream& mmtStream, const MmtTl
 }
 
 void RemuxerHandler::onSubtitleData(const MmtTlv::MmtStream& mmtStream, const struct MmtTlv::MfuData& mfuData) {
+    const auto& subtitleInfo = mmtStream.additionalAribSubtitleInfo();
+    if (!subtitleInfo) {
+        return;
+    }
+
+    // ARIB-TTML
+    if (subtitleInfo->subtitleFormat != 0) {
+        return;
+    }
+
+    const bool synchronized = mmtStream.isClosedCaption();
+    if ((!synchronized && !mmtStream.isSuperimposition()) ||
+        (!synchronized && subtitleInfo->tmd != 0b1111)) {
+        return;
+    }
+
     std::string ttml(mfuData.data.begin(), mfuData.data.end());
     const uint32_t streamIndex = mmtStream.getStreamIndex();
     subtitleDebugLog("subtitle mfu stream=" + std::to_string(streamIndex) +
@@ -191,8 +210,12 @@ void RemuxerHandler::onSubtitleData(const MmtTlv::MmtStream& mmtStream, const st
         "/" + std::to_string(mfuData.subtitleLastSubsampleNumber) +
         " size=" + std::to_string(mfuData.data.size()));
 
+    // A non-zero data type carries a subtitle resource (an SVG font) rather
+    // than a TTML document. Its glyphs define the DRCS patterns that later
+    // captions designate, so captions that arrive first are held back until
+    // the glyphs they need are known.
     if (mfuData.subtitleDataType != 0) {
-        auto glyphs = B24SubtitleConvertor::parseSvgGlyphResource(ttml);
+        auto glyphs = arib::ttml::parse_svg_glyph_resource(ttml);
         subtitleDebugLog("subtitle resource stream=" + std::to_string(streamIndex) +
             " glyphs=" + std::to_string(glyphs.size()));
         if (!glyphs.empty()) {
@@ -202,7 +225,7 @@ void RemuxerHandler::onSubtitleData(const MmtTlv::MmtStream& mmtStream, const st
             auto pending = std::move(mapPendingSubtitleTtml[streamIndex]);
             mapPendingSubtitleTtml.erase(streamIndex);
             for (const auto& pendingTtml : pending) {
-                if (B24SubtitleConvertor::hasMissingDrcsGlyph(pendingTtml, streamGlyphs)) {
+                if (arib::ttml::has_missing_drcs_glyph(pendingTtml, streamGlyphs)) {
                     subtitleDebugLog("subtitle pending keep stream=" + std::to_string(streamIndex));
                     mapPendingSubtitleTtml[streamIndex].push_back(pendingTtml);
                 }
@@ -216,8 +239,8 @@ void RemuxerHandler::onSubtitleData(const MmtTlv::MmtStream& mmtStream, const st
     }
 
     auto& streamGlyphs = mapSubtitleDrcsGlyphs[streamIndex];
-    if (B24SubtitleConvertor::containsDrcsCodepoint(ttml) &&
-        B24SubtitleConvertor::hasMissingDrcsGlyph(ttml, streamGlyphs)) {
+    if (arib::ttml::contains_drcs_codepoint(ttml) &&
+        arib::ttml::has_missing_drcs_glyph(ttml, streamGlyphs)) {
         subtitleDebugLog("subtitle pending add stream=" + std::to_string(streamIndex));
         mapPendingSubtitleTtml[streamIndex].push_back(std::move(ttml));
         return;
@@ -228,16 +251,41 @@ void RemuxerHandler::onSubtitleData(const MmtTlv::MmtStream& mmtStream, const st
 }
 
 void RemuxerHandler::convertAndWriteSubtitle(const MmtTlv::MmtStream& mmtStream, const std::string& ttml) {
+    const auto& subtitleInfo = mmtStream.additionalAribSubtitleInfo();
+    if (!subtitleInfo) {
+        return;
+    }
+
+    const bool synchronized = mmtStream.isClosedCaption();
+    const auto pesType = synchronized ? B24::PESData::PESType::Synchronized : B24::PESData::PESType::Asynchronous;
+
     std::list<B24SubtitleOutput> output;
-    B24SubtitleConvertor::convert(ttml, mapSubtitleDrcsGlyphs[mmtStream.getStreamIndex()], output);
+    B24SubtitleConverter::convert(ttml, output, pesType, subtitleInfo->resolution,
+        mapSubtitleDrcsGlyphs[mmtStream.getStreamIndex()]);
     subtitleDebugLog("subtitle converted stream=" + std::to_string(mmtStream.getStreamIndex()) +
         " pes=" + std::to_string(output.size()));
     if (output.empty()) {
         return;
     }
 
+    const auto currentPts = lastPcr / 300;
+    if (subtitleInfo->tmd == 0b1111) {
+        for (const auto& pesData : output) {
+            writeSubtitle(mmtStream, pesData, currentPts);
+        }
+        return;
+    }
+
+    const auto referencePts = subtitleInfo->referenceStartTime.toPtsValue();
     for (const auto& pesData : output) {
-        writeSubtitle(mmtStream, pesData);
+        if (!pesData.begin) {
+            continue;
+        }
+        const auto pts = referencePts + static_cast<int64_t>(*pesData.begin * 90);
+        if (pts < 0) {
+            continue;
+        }
+        writeSubtitle(mmtStream, pesData, std::max(static_cast<uint64_t>(pts), currentPts));
     }
 }
 
@@ -408,90 +456,50 @@ void RemuxerHandler::writePcr(uint64_t pcrBase90k) {
     lastWrittenPcr = pcrBase90k;
 }
 
-void RemuxerHandler::writeSubtitle(const MmtTlv::MmtStream& mmtStream, const B24SubtitleOutput& subtitle) {
-    std::vector<uint8_t> pesOutput;
+void RemuxerHandler::writeSubtitle(const MmtTlv::MmtStream& mmtStream, const B24SubtitleOutput& subtitle, std::optional<uint64_t> pts) {
+    const auto& subtitleInfo = mmtStream.additionalAribSubtitleInfo();
+    if (!subtitleInfo) {
+        return;
+    }
 
-    PESPacket pes;
-    uint64_t pts = subtitle.calcPts(programStartTime);
-    if (ptsOffset90k != 0)
-        pts = pts > static_cast<uint64_t>(ptsOffset90k) ? pts - ptsOffset90k : 0;
+    const bool synchronized = mmtStream.isClosedCaption();
+    if (!synchronized && !mmtStream.isSuperimposition()) {
+        return;
+    }
+
+    if (pts && ptsOffset90k != 0) {
+        pts = *pts > static_cast<uint64_t>(ptsOffset90k) ? *pts - ptsOffset90k : 0;
+    }
+
     subtitleDebugLog("writeSubtitle: tag=" + std::to_string(mmtStream.getComponentTag()) +
-        " calcPts=" + std::to_string(pts) +
+        " pts=" + (pts ? std::to_string(*pts) : std::string("none")) +
         " lastPcr=" + std::to_string(lastPcr) +
-        " programStartTime=" + std::to_string(programStartTime) +
         " pesData.size=" + std::to_string(subtitle.pesData.size()));
-    // calcPts() returns 0 when the TTML carried no begin time, i.e. the cue has
-    // no timing information at all. It must never reach the calibration below:
-    // anchoring on a zero pts locks subtitlePtsOffset90k onto the entire PCR
-    // value (~56 years in 90kHz ticks), which then pushes every later caption of
-    // the program far outside the timeline where no player will render it. Such
-    // cues do turn up in practice - at an event boundary the caption asset can be
-    // handed over to another source that emits an empty, untimed cue first.
-    // The pts==0 check further down runs after the offset was applied, so it
-    // cannot catch this.
-    if (pts == 0) {
-        subtitleDebugLog("writeSubtitle: cue has no begin time, skipping");
-        return;
-    }
-    // calcPts() comes from the EIT program start (whole-second resolution and
-    // offset from the actual stream clock by the scheduled-vs-broadcast gap), so
-    // it is consistently behind the PCR. The old code snapped every caption
-    // independently to the PCR (std::max), which re-spaced them by mux timing and
-    // broke the TTML relative spacing - a fixed-duration caption then overran
-    // into the next one. Instead calibrate one offset per program (recomputed
-    // when programStartTime changes) and apply it to every caption, which keeps
-    // the TTML spacing intact while aligning captions to the stream clock.
-    // A different asset means a different caption source, and therefore a
-    // potentially different time base, even while the EIT still reports the same
-    // program - so recalibrate on a stream change as well.
-    const uint32_t streamIndex = mmtStream.getStreamIndex();
-    const bool needsCalibration = !subtitleOffsetCalibrated ||
-        programStartTime != subtitleOffsetProgramStart ||
-        streamIndex != subtitleOffsetStreamIndex;
-    if (needsCalibration && lastWrittenPcr == 0) {
-        // No PCR/NTP-derived media clock has been established yet (lastPcr is
-        // still its zero-initialized default). Calibrating against it now
-        // would lock subtitlePtsOffset90k onto a bogus zero anchor, making
-        // every later adjustedPts collapse to 0 and get silently dropped by
-        // the pts==0 check below for the rest of the program - not just this
-        // cue. This happens whenever a caption MFU is demuxed before the
-        // first video PCR or NTP packet, which is more likely the more
-        // streams are multiplexed (e.g. 8K sources with multiple audio
-        // tracks). Drop just this cue and retry calibration on the next one.
-        subtitleDebugLog("writeSubtitle: no PCR established yet, dropping caption until calibration is possible");
-        return;
-    }
-    const uint64_t pcr90 = lastPcr / 300;
-    if (needsCalibration) {
-        subtitlePtsOffset90k = static_cast<int64_t>(pcr90) - static_cast<int64_t>(pts);
-        subtitleOffsetCalibrated = true;
-        subtitleOffsetProgramStart = programStartTime;
-        subtitleOffsetStreamIndex = streamIndex;
-    }
-    int64_t adjustedPts = static_cast<int64_t>(pts) + subtitlePtsOffset90k;
-    if (adjustedPts < 0)
-        adjustedPts = 0;
-    pts = static_cast<uint64_t>(adjustedPts);
-    if (pts == 0) {
-        subtitleDebugLog("writeSubtitle: pts==0, skipping");
-        return;
+
+    // Ensure management data is sent before statement data so that
+    // libaribcaption has the language info it needs to accept statement
+    // packets.
+    if (pts) {
+        writeCaptionManagementData(*pts);
     }
 
-    // Ensure management data is sent before statement data so that libaribcaption
-    // has the language info it needs to accept statement packets.
-    writeCaptionManagementData(pts);
+    std::vector<uint8_t> pesOutput;
+    PESPacket pes;
+    if (synchronized && pts) {
+        pes.setPts(*pts);
+    }
 
-    pes.setPts(pts);
-
-    pes.setStreamId(componentTagToStreamId(mmtStream.getComponentTag()));
+    pes.setStreamId(synchronized ? STREAM_ID_PRIVATE_STREAM_1 : STREAM_ID_PRIVATE_STREAM_2);
     pes.setPayload(&subtitle.pesData);
     pes.setPayloadLength(subtitle.pesData.size());
-    pes.setPrivateData(&ccis);
-    pes.setStuffingByteLength(1);
+    if (synchronized) {
+        pes.setPrivateData(&ccis);
+        pes.setStuffingByteLength(1);
+    }
     pes.pack(pesOutput);
 
     const auto pid = mmtStream.getMpeg2PacketId();
-    subtitleDebugLog("writeSubtitle: pts=" + std::to_string(pts) + " pid=" + std::to_string(pid) + " pesOutput.size=" + std::to_string(pesOutput.size()));
+    subtitleDebugLog("writeSubtitle: pid=" + std::to_string(pid) + " pesOutput.size=" + std::to_string(pesOutput.size()));
     if (pid > 0x1FFE) {
         subtitleDebugLog("writeSubtitle: pid too large, skipping");
         return;
@@ -544,38 +552,43 @@ void RemuxerHandler::writeCaptionManagementData(uint64_t pts) {
         if (stream.second.getAssetType() != MmtTlv::AssetType::stpp) {
             continue;
         }
-        if (stream.second.getComponentTag() < 0x30 || stream.second.getComponentTag() > 0x37) {
-            continue;
-        }
+        const auto& subtitleInfo = stream.second.additionalAribSubtitleInfo();
+		if (!subtitleInfo) {
+			continue;
+		}
 
         B24::CaptionManagementData captionManagementData;
         B24::CaptionManagementData::Language language;
-        language.languageCode = "jpn";
+        language.languageCode = subtitleInfo->languageCode;
         language.format = 0b1000;
-        language.dmf = 0b1010;
+        language.dmf = subtitleInfo->dmf;
 
         captionManagementData.languages.push_back(language);
         B24::DataGroup dataGroup;
         dataGroup.setGroupData(captionManagementData);
 
         B24::PESData pesData(dataGroup);
-        // 0x30 = caption (Synchronized), 0x31-0x37 = superimposed (Asynchronous)
-        const bool isSuperimposed = stream.second.getComponentTag() != 0x30;
-        pesData.SetPESType(isSuperimposed ? B24::PESData::PESType::Asynchronous
-                                          : B24::PESData::PESType::Synchronized);
+        const bool synchronized = stream.second.isClosedCaption();
+        if (!synchronized && !stream.second.isSuperimposition()) {
+            continue;
+        }
+        pesData.SetPESType(synchronized ? B24::PESData::PESType::Synchronized : B24::PESData::PESType::Asynchronous);
 
         std::vector<uint8_t> packedPesData;
-
         pesData.pack(packedPesData);
 
         std::vector<uint8_t> pesOutput;
         PESPacket pes;
-        pes.setPts(lastCaptionManagementDataPts);
-        pes.setStreamId(componentTagToStreamId(stream.second.getComponentTag()));
+        if (synchronized) {
+            pes.setPts(lastCaptionManagementDataPts);
+        }
+        pes.setStreamId(synchronized ? STREAM_ID_PRIVATE_STREAM_1 : STREAM_ID_PRIVATE_STREAM_2);
         pes.setPayload(&packedPesData);
         pes.setPayloadLength(packedPesData.size());
-        pes.setPrivateData(&ccis);
-        pes.setStuffingByteLength(1);
+        if (synchronized) {
+            pes.setPrivateData(&ccis);
+            pes.setStuffingByteLength(1);
+        }
         pes.pack(pesOutput);
 
         const auto pid = stream.second.getMpeg2PacketId();
@@ -732,19 +745,6 @@ void RemuxerHandler::onMhBit(const MmtTlv::MhBit& mhBit) {
 
 void RemuxerHandler::onMhEit(const MmtTlv::MhEit& mhEit) {
     tsid = mhEit.tlvStreamId;
-
-    if (mhEit.isPf() && mhEit.sectionNumber == 0) {
-        for (const auto& mhEvent : mhEit.events) {
-            if (!mhEvent) {
-                continue;
-            }
-            uint64_t startTime{};
-            if (EITConvertStartTimeToUnixTime(mhEvent->startTime, &startTime)) {
-                programStartTime = startTime;
-            }
-            break;
-        }
-    }
 
     ts::EIT tsEit(true, mhEit.isPf(), 0, mhEit.versionNumber % 32, true, mhEit.serviceId, mhEit.tlvStreamId, mhEit.originalNetworkId);
     for (const auto& mhEvent : mhEit.events) {
@@ -1126,12 +1126,7 @@ void RemuxerHandler::onMpt(const MmtTlv::Mpt& mpt) {
                 if (asset.assetType == MmtTlv::AssetType::stpp) {
                     ts::DataComponentDescriptor descriptor;
                     descriptor.data_component_id = 0x0008;
-                    if (mmtStream->getComponentTag() == 0x30) {
-                        descriptor.additional_data_component_info.push_back(0x3D);
-                    }
-                    else {
-                        descriptor.additional_data_component_info.push_back(0x3C);
-                    }
+                    descriptor.additional_data_component_info.push_back(mmtStream->isClosedCaption() ? 0x3D : 0x3C);
                     stream.descs.add(duck, descriptor);
                 }
 
@@ -1314,7 +1309,8 @@ void RemuxerHandler::onNit(const MmtTlv::Nit& nit) {
 void RemuxerHandler::onNtp(const MmtTlv::NTPv4& ntp) {
     writePcr(ntp.transmit_timestamp.toPcrValue() / 300);
 
-    writeCaptionManagementData(ntp.transmit_timestamp.toPcrValue() / 300);
+    const auto pts = static_cast<uint64_t>(ntp.transmit_timestamp.toPtsValue());
+    writeCaptionManagementData(pts);
 }
 
 void RemuxerHandler::clear() {
@@ -1329,10 +1325,5 @@ void RemuxerHandler::clear() {
     lastPcr = 0;
     lastWrittenPcr = 0;
     lastCaptionManagementDataPts = 0;
-    programStartTime = 0;
     ptsOffset90k = 0;
-    subtitlePtsOffset90k = 0;
-    subtitleOffsetCalibrated = false;
-    subtitleOffsetProgramStart = 0;
-    subtitleOffsetStreamIndex = 0;
 }

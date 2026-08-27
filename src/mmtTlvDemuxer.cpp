@@ -24,6 +24,7 @@
 #include "mhStreamIdentificationDescriptor.h"
 #include "videoComponentDescriptor.h"
 #include "mhAudioComponentDescriptor.h"
+#include "mhDataComponentDescriptor.h"
 #include "ipv6.h"
 #include "ntp.h"
 #include "dataTransmissionMessage.h"
@@ -641,6 +642,10 @@ void MmtTlvDemuxer::processMmtPackageTable(const Mpt& mpt) {
             continue;
         }
 
+        if (asset.assetType == AssetType::stpp) {
+            mmtStream->subtitleInfo.reset();
+        }
+
         for (const auto& descriptor : asset.descriptors.list) {
             switch (descriptor->getDescriptorTag()) {
             case MpuTimestampDescriptor::kDescriptorTag:
@@ -675,6 +680,17 @@ void MmtTlvDemuxer::processMmtPackageTable(const Mpt& mpt) {
                 
                 statistics.getMmtStat(mmtStream->packetId)->audioComponentType = mmtDescriptor->componentType;
                 statistics.getMmtStat(mmtStream->packetId)->audioSamplingRate = mmtDescriptor->samplingRate;
+                break;
+            }
+            case MhDataComponentDescriptor::kDescriptorTag:
+            {
+                const auto* mmtDescriptor = static_cast<const MhDataComponentDescriptor*>(descriptor.get());
+                if (asset.assetType == AssetType::stpp && mmtDescriptor->dataComponentId == 0x0020) {
+                    AdditionalAribSubtitleInfo subtitleInfo;
+                    Common::ReadStream stream(mmtDescriptor->additionalDataComponentInfo);
+                    subtitleInfo.unpack(stream);
+                    mmtStream->subtitleInfo = std::move(subtitleInfo);
+                }
                 break;
             }
             }

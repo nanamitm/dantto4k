@@ -59,7 +59,7 @@ struct tm EITConvertStartTime(uint64_t i_date) {
 }
 
 bool EITConvertStartTimeToUnixTime(uint64_t i_date, uint64_t* p_unix_time) {
-    if (p_unix_time == nullptr || i_date == UNKNOWN_START_TIME) {
+    if (i_date == UNKNOWN_START_TIME || p_unix_time == nullptr) {
         return false;
     }
 
@@ -68,16 +68,16 @@ bool EITConvertStartTimeToUnixTime(uint64_t i_date, uint64_t* p_unix_time) {
         return false;
     }
 
-    constexpr std::chrono::hours JST_OFFSET{ 9 };
+    constexpr std::chrono::hours JST_OFFSET{9};
     const std::chrono::year_month_day date{
-        std::chrono::year{ startTime.tm_year + BASE_YEAR },
-        std::chrono::month{ static_cast<unsigned>(startTime.tm_mon + 1) },
-        std::chrono::day{ static_cast<unsigned>(startTime.tm_mday) }
+        std::chrono::year{startTime.tm_year + BASE_YEAR},
+        std::chrono::month{static_cast<unsigned>(startTime.tm_mon + 1)},
+        std::chrono::day{static_cast<unsigned>(startTime.tm_mday)}
     };
-    const auto utcTime = std::chrono::sys_days{ date } +
-        std::chrono::hours{ startTime.tm_hour } +
-        std::chrono::minutes{ startTime.tm_min } +
-        std::chrono::seconds{ startTime.tm_sec } - JST_OFFSET;
+    const auto utcTime = std::chrono::sys_days{date} +
+        std::chrono::hours{startTime.tm_hour} +
+        std::chrono::minutes{startTime.tm_min} +
+        std::chrono::seconds{startTime.tm_sec} - JST_OFFSET;
     const auto unixTime = std::chrono::duration_cast<std::chrono::seconds>(
         utcTime.time_since_epoch()).count();
     if (unixTime < 0) {
