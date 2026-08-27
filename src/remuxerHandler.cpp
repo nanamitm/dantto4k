@@ -62,6 +62,13 @@ void subtitleDebugLog(const std::string& line) {
 
 namespace {
 
+// Captions waiting for their DRCS glyphs are held in mapPendingSubtitleTtml.
+// The glyph resource may never arrive - tuning in mid-broadcast, or a resource
+// riding an asset the demuxer drops - and nothing else drains the queue before
+// clear(), so bound it. A caption held past this many arrivals has missed its
+// slot anyway, so the oldest one goes first.
+constexpr size_t MAX_PENDING_SUBTITLE_TTML = 32;
+
 int convertRunningStatus(int runningStatus) {
     switch (runningStatus) {
     case 0:
@@ -242,7 +249,13 @@ void RemuxerHandler::onSubtitleData(const MmtTlv::MmtStream& mmtStream, const st
     if (arib::ttml::contains_drcs_codepoint(ttml) &&
         arib::ttml::has_missing_drcs_glyph(ttml, streamGlyphs)) {
         subtitleDebugLog("subtitle pending add stream=" + std::to_string(streamIndex));
-        mapPendingSubtitleTtml[streamIndex].push_back(std::move(ttml));
+        auto& pending = mapPendingSubtitleTtml[streamIndex];
+        if (pending.size() >= MAX_PENDING_SUBTITLE_TTML) {
+            subtitleDebugLog("subtitle pending overflow stream=" + std::to_string(streamIndex) +
+                ", dropping oldest");
+            pending.erase(pending.begin());
+        }
+        pending.push_back(std::move(ttml));
         return;
     }
 

@@ -391,7 +391,7 @@ struct DescriptorConverter<MmtTlv::MhServiceDescriptor> {
         MmtTlv::Common::WriteStream s;
         s.put8U(0x48); // descriptor_tag
         s.put8U(static_cast<uint8_t>(descriptorLength)); // descriptor_length
-        s.put8U(1); // service_type
+        s.put8U(mmtDescriptor.serviceType); // service_type
         s.put8U(static_cast<uint8_t>(serviceProviderName.size())); // service_provider_name_length
         if (serviceProviderName.size()) {
             s.write(serviceProviderName); // service_provider_name

@@ -686,10 +686,16 @@ void MmtTlvDemuxer::processMmtPackageTable(const Mpt& mpt) {
             {
                 const auto* mmtDescriptor = static_cast<const MhDataComponentDescriptor*>(descriptor.get());
                 if (asset.assetType == AssetType::stpp && mmtDescriptor->dataComponentId == 0x0020) {
+                    // Only publish a fully parsed descriptor. A truncated one
+                    // leaves the struct half-filled, and the subtitle path
+                    // treats an engaged subtitleInfo as authoritative - it
+                    // would signal ARIB-TTML with a zero reference time and
+                    // copy the language code straight into the output stream.
                     AdditionalAribSubtitleInfo subtitleInfo;
                     Common::ReadStream stream(mmtDescriptor->additionalDataComponentInfo);
-                    subtitleInfo.unpack(stream);
-                    mmtStream->subtitleInfo = std::move(subtitleInfo);
+                    if (subtitleInfo.unpack(stream)) {
+                        mmtStream->subtitleInfo = std::move(subtitleInfo);
+                    }
                 }
                 break;
             }

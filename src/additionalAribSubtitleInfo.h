@@ -19,7 +19,7 @@ public:
 	uint8_t subtitleTag{};
 	uint8_t subtitle_info_version{};
 	bool start_mpu_sequence_number_flag{};
-	std::array<char, 3> languageCode;
+	std::array<char, 3> languageCode{};
 	uint8_t type{};
 	uint8_t subtitleFormat{};
 	uint8_t opm{};
