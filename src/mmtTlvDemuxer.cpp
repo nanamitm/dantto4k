@@ -49,61 +49,6 @@ namespace {
 // inflated by tens of thousands of phantom drops.
 constexpr uint32_t sequenceResyncThreshold = 1000;
 
-// Re-serialize a CompressedIPPacket header back to bytes.
-std::vector<uint8_t> serializeCompressedIP(const CompressedIPPacket& cip)
-{
-    Common::WriteStream s;
-    uint16_t word = static_cast<uint16_t>((cip.contextId << 4) | (cip.sequenceNumber & 0x0F));
-    s.putBe16U(word);
-    s.put8U(static_cast<uint8_t>(cip.headerType));
-    if (cip.headerType == ContextHeaderType::ContextIdPartialIpv6AndPartialUdp) {
-        s.write(std::span<const uint8_t>(cip.ipv6.data(), cip.ipv6.size()));
-        s.write(std::span<const uint8_t>(cip.udp.data(),  cip.udp.size()));
-    }
-    return s.getData();
-}
-
-// Re-serialize an MMTP packet back to bytes.
-// The scrambling flag in the extension header is cleared (encryption flag → UNSCRAMBLED).
-std::vector<uint8_t> serializeMmtp(const Mmtp& mmtp)
-{
-    Common::WriteStream s;
-
-    uint8_t b0 = static_cast<uint8_t>(
-        (static_cast<uint8_t>(mmtp.version) << 6) |
-        (static_cast<uint8_t>(mmtp.packetCounterFlag) << 5) |
-        (static_cast<uint8_t>(mmtp.fecType) << 3) |
-        (static_cast<uint8_t>(mmtp.reserved1) << 2) |
-        (static_cast<uint8_t>(mmtp.extensionHeaderFlag) << 1) |
-         static_cast<uint8_t>(mmtp.rapFlag));
-    s.put8U(b0);
-
-    uint8_t b1 = static_cast<uint8_t>((mmtp.reserved2 << 6) | static_cast<uint8_t>(mmtp.payloadType));
-    s.put8U(b1);
-
-    s.putBe16U(mmtp.packetId);
-    s.putBe32U(mmtp.deliveryTimestamp);
-    s.putBe32U(mmtp.packetSequenceNumber);
-
-    if (mmtp.packetCounterFlag)
-        s.putBe32U(mmtp.packetCounter);
-
-    if (mmtp.extensionHeaderFlag) {
-        s.putBe16U(mmtp.extensionHeaderType);
-        s.putBe16U(mmtp.extensionHeaderLength);
-
-        auto extHdr = mmtp.extensionHeaderField;
-        // Clear encryptionFlag (bits 4:3) at byte offset 4 inside the extension header field.
-        // Layout: [2B sub-type][2B reserved][1B flags including encryptionFlag at bits 4:3]...
-        if (extHdr.size() >= 5)
-            extHdr[4] &= ~0x18u;  // 0b00011000 = encryption flag mask
-        s.write(std::span<const uint8_t>(extHdr.data(), extHdr.size()));
-    }
-
-    s.write(std::span<const uint8_t>(mmtp.payload.data(), mmtp.payload.size()));
-    return s.getData();
-}
-
 // Serialize a complete TLV packet: [0x7F][type][len_hi][len_lo][payload]
 std::vector<uint8_t> serializeTlvPacket(uint8_t packetType, const std::vector<uint8_t>& payload)
 {
@@ -210,14 +155,25 @@ DemuxStatus MmtTlvDemuxer::demux(Common::ReadStream& stream) {
         {
             statistics.tlvHeaderCompressedIpPacketCount++;
 
+            // A packet we cannot parse is still a packet the tuner delivered.
+            // Pass it through untouched rather than dropping it, so a dump
+            // stays a faithful record even when the input is damaged.
             if (!compressedIPPacket.unpack(tlvDataStream)) {
+                if (decodedDumpCallback) {
+                    auto packet = serializeTlvPacket(static_cast<uint8_t>(TlvPacketType::HeaderCompressedIpPacket), tlv.getData());
+                    decodedDumpCallback(packet.data(), packet.size());
+                }
                 break;
             }
-        
+
             if (!mmtp.unpack(tlvDataStream)) {
+                if (decodedDumpCallback) {
+                    auto packet = serializeTlvPacket(static_cast<uint8_t>(TlvPacketType::HeaderCompressedIpPacket), tlv.getData());
+                    decodedDumpCallback(packet.data(), packet.size());
+                }
                 break;
             }
-        
+
             auto mmtStat = statistics.getMmtStat(mmtp.packetId);
             if (mmtStat->count == 0) {
                 mmtStat->lastPacketSequenceNumber = mmtp.packetSequenceNumber;
@@ -258,6 +214,7 @@ DemuxStatus MmtTlvDemuxer::demux(Common::ReadStream& stream) {
                 mmtStat->count++;
             }
 
+            bool decrypted = false;
             if (mmtp.extensionHeaderScrambling.has_value()) {
                 if (mmtp.extensionHeaderScrambling->encryptionFlag == EncryptionFlag::ODD ||
                     mmtp.extensionHeaderScrambling->encryptionFlag == EncryptionFlag::EVEN) {
@@ -283,20 +240,40 @@ DemuxStatus MmtTlvDemuxer::demux(Common::ReadStream& stream) {
                             }
                             return DemuxStatus::WattingForEcm;
                         }
+                        decrypted = true;
                     }
                 }
             }
 
-            // Write decoded TLV packet to dump callback (scrambling flag cleared, payload decrypted).
+            // Write the packet to the decoded dump. Rebuilding it from the
+            // parsed structures silently drops everything the parser does not
+            // model - reserved bits, unknown extension header types, trailing
+            // bytes - so patch the bytes the tuner delivered instead.
+            // Decryption is AES-CTR and length preserving, and the MMTP payload
+            // always runs to the end of the TLV packet, so the plaintext drops
+            // straight back into place. The scrambling flag is cleared only when
+            // we really did decrypt, never when assumeDescrambled skipped it.
             if (decodedDumpCallback) {
-                auto cipBytes  = serializeCompressedIP(compressedIPPacket);
-                auto mmtpBytes = serializeMmtp(mmtp);
-                std::vector<uint8_t> payload;
-                payload.reserve(cipBytes.size() + mmtpBytes.size());
-                payload.insert(payload.end(), cipBytes.begin(),  cipBytes.end());
-                payload.insert(payload.end(), mmtpBytes.begin(), mmtpBytes.end());
-                auto packet = serializeTlvPacket(static_cast<uint8_t>(TlvPacketType::HeaderCompressedIpPacket), payload);
-                decodedDumpCallback(packet.data(), packet.size());
+                if (decrypted) {
+                    std::vector<uint8_t> patched = tlv.getData();
+                    if (patched.size() >= mmtp.payload.size()) {
+                        const size_t payloadOffset = patched.size() - mmtp.payload.size();
+                        std::copy(mmtp.payload.begin(), mmtp.payload.end(), patched.begin() + payloadOffset);
+
+                        if (mmtp.extensionHeaderFlag && mmtp.extensionHeaderLength >= 5 &&
+                            payloadOffset >= mmtp.extensionHeaderLength) {
+                            // Extension header field layout:
+                            // [2B sub-type][2B reserved][1B flags, encryption flag at bits 4:3]
+                            patched[payloadOffset - mmtp.extensionHeaderLength + 4] &= ~0x18u;
+                        }
+                    }
+                    auto packet = serializeTlvPacket(static_cast<uint8_t>(TlvPacketType::HeaderCompressedIpPacket), patched);
+                    decodedDumpCallback(packet.data(), packet.size());
+                }
+                else {
+                    auto packet = serializeTlvPacket(static_cast<uint8_t>(TlvPacketType::HeaderCompressedIpPacket), tlv.getData());
+                    decodedDumpCallback(packet.data(), packet.size());
+                }
             }
 
             Common::ReadStream mmtpPayloadStream(mmtp.payload);
@@ -336,6 +313,11 @@ DemuxStatus MmtTlvDemuxer::demux(Common::ReadStream& stream) {
         default:
         {
             statistics.tlvUndefinedCount++;
+            // Unknown to us, but still part of what the tuner delivered.
+            if (decodedDumpCallback) {
+                auto packet = serializeTlvPacket(static_cast<uint8_t>(tlv.getPacketType()), tlv.getData());
+                decodedDumpCallback(packet.data(), packet.size());
+            }
         }
         }
     }
