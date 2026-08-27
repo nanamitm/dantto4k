@@ -89,12 +89,15 @@ DemuxStatus MmtTlvDemuxer::demux(Common::ReadStream& stream) {
         return DemuxStatus::NotValidTlv;
     }
 
+    // Tlv::unpack() consumes the header and the data, and already returns false
+    // when either is incomplete - demuxing resumes from `cur` once more arrives.
+    // Re-checking leftBytes() against the data length here compared the bytes
+    // remaining *after* this packet against this packet's own length, so
+    // whenever the buffer tail held less than the packet just read, a complete
+    // packet was rewound and reported as NotEnoughBuffer. Mid-stream the 5 MB
+    // buffer hides it; at end of input the caller cannot make progress and
+    // discards the remainder, losing the last packets of every stream.
     if (!tlv.unpack(stream)) {
-        stream.seek(cur);
-        return DemuxStatus::NotEnoughBuffer;
-    }
-
-    if (stream.leftBytes() < tlv.getDataLength()) {
         stream.seek(cur);
         return DemuxStatus::NotEnoughBuffer;
     }
