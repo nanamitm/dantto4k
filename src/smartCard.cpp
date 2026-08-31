@@ -14,7 +14,7 @@ bool LocalSmartCard::init() {
 
 LocalSmartCard::LocalSmartCard() {
 #ifdef WIN32
-    HMODULE hWinSCard = LoadLibraryA(config.customWinscardDLL.empty() ? "winscard.dll" : config.customWinscardDLL.c_str());
+    hWinSCard = LoadLibraryA(config.customWinscardDLL.empty() ? "winscard.dll" : config.customWinscardDLL.c_str());
     if (!hWinSCard) {
         if (config.customWinscardDLL.empty()) {
             throw std::runtime_error("Failed to load winscard.dll");
@@ -23,6 +23,19 @@ LocalSmartCard::LocalSmartCard() {
             throw std::runtime_error("Failed to load winscard.dll from specified path: " + config.customWinscardDLL);
         }
     }
+
+    // A throwing constructor does not run the destructor, so the module reference
+    // taken above has to be released here if any of the lookups below fails.
+    struct ModuleGuard {
+        HMODULE& hModule;
+        bool keep = false;
+        ~ModuleGuard() {
+            if (!keep && hModule) {
+                FreeLibrary(hModule);
+                hModule = nullptr;
+            }
+        }
+    } moduleGuard{ hWinSCard };
 
     pSCardEstablishContext = reinterpret_cast<FnSCardEstablishContext>(GetProcAddress(hWinSCard, "SCardEstablishContext"));
     if (!pSCardEstablishContext) {
@@ -57,6 +70,8 @@ LocalSmartCard::LocalSmartCard() {
     if (!pSCardFreeMemory) {
         throw std::runtime_error("Failed to get address of SCardFreeMemory");
     }
+
+    moduleGuard.keep = true;
 #endif
 }
 
@@ -71,6 +86,13 @@ LocalSmartCard::~LocalSmartCard() {
 #endif
         hContext = 0;
     }
+
+#ifdef WIN32
+    if (hWinSCard) {
+        FreeLibrary(hWinSCard);
+        hWinSCard = nullptr;
+    }
+#endif
 }
 
 bool LocalSmartCard::isConnected() const {
