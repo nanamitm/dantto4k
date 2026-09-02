@@ -28,6 +28,12 @@ bool Mmtp::unpack(Common::ReadStream& stream) {
 			packetCounter = stream.getBe32U();
 		}
 
+		// The demuxer reuses one Mmtp for every packet, so a value left over
+		// from an earlier packet would be read as this packet's own. Only the
+		// scrambling sub-type below fills this in; every other extension header
+		// must leave it empty.
+		extensionHeaderScrambling = std::nullopt;
+
 		if (extensionHeaderFlag) {
 			if (stream.leftBytes() < 4) {
 				return false;
@@ -53,9 +59,6 @@ bool Mmtp::unpack(Common::ReadStream& stream) {
 					}
 				}
 			}
-		}
-		else {
-			extensionHeaderScrambling = std::nullopt;
 		}
 
 		payload.resize(stream.leftBytes());
