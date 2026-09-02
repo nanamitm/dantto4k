@@ -2,6 +2,10 @@
 #include <sstream>
 #include "config.h"
 
+#ifdef WIN32
+std::atomic<bool> g_processDetaching{false};
+#endif
+
 bool LocalSmartCard::init() {
 #ifdef WIN32
     LONG result = pSCardEstablishContext(SCARD_SCOPE_USER, nullptr, nullptr, &hContext);
@@ -88,10 +92,16 @@ LocalSmartCard::~LocalSmartCard() {
     }
 
 #ifdef WIN32
-    if (hWinSCard) {
+    // Skip the release while the DLL is being unloaded: this destructor then
+    // runs from the CRT's static teardown inside DllMain, under the loader
+    // lock, where FreeLibrary() may deadlock and is forbidden outright once the
+    // process is terminating. Leaking the reference until the process goes away
+    // is the lesser evil; the release still happens when a LocalSmartCard is
+    // replaced at runtime, which is what it is for.
+    if (hWinSCard && !g_processDetaching.load(std::memory_order_relaxed)) {
         FreeLibrary(hWinSCard);
-        hWinSCard = nullptr;
     }
+    hWinSCard = nullptr;
 #endif
 }
 

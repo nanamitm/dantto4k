@@ -1,10 +1,18 @@
 #pragma once
+#include <atomic>
 #include <iostream>
 #include <memory>
 #include <string>
 #include <vector>
 #include <winscard.h>
 #include "casProxyClient.h"
+
+#ifdef WIN32
+// Set from DllMain() on DLL_PROCESS_DETACH. The MSVC CRT runs static
+// destructors after the user DllMain returns and still holds the loader lock,
+// and FreeLibrary() must not be called from there - see ~LocalSmartCard().
+extern std::atomic<bool> g_processDetaching;
+#endif
 
 class ApduResponse {
 public:

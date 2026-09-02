@@ -3,6 +3,7 @@
 #include "acasHandler.h"
 #include "mmtsRecorder.h"
 #include "demuxerTeeHandler.h"
+#include "smartCard.h"
 #include <memory>
 
 BonDriverContext g_bonDriverContext;
@@ -183,6 +184,12 @@ BOOL APIENTRY DllMain(HINSTANCE hModule, DWORD fdwReason, LPVOID lpReserved) {
     switch (fdwReason) {
     case DLL_PROCESS_ATTACH:
         ::hModule = hModule;
+        break;
+    case DLL_PROCESS_DETACH:
+        // The CRT runs static destructors - including g_bonDriverContext and
+        // the smart card it owns - after this returns, still under the loader
+        // lock. Tell them not to touch the loader from there.
+        g_processDetaching.store(true, std::memory_order_relaxed);
         break;
     }
 
