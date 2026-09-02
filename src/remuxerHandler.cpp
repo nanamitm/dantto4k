@@ -920,14 +920,15 @@ void RemuxerHandler::onMhEit(const MmtTlv::MhEit& mhEit) {
         }
         section.get()->setSectionNumber(mhEit.sectionNumber);
         section.get()->setLastSectionNumber(mhEit.lastSectionNumber);
-        if (!mhEit.isPf()) {
-            // TSDuck leaves segment_last_section_number at zero unless the
-            // sections are reorganized, and a schedule section outside its own
-            // segment is discarded by receivers. Carry over what MH-EIT said.
-            // (EIT payload: transport_stream_id, original_network_id,
-            //  segment_last_section_number, last_table_id)
-            section.get()->setUInt8(4, mhEit.segmentLastSectionNumber);
-        }
+        // TSDuck leaves segment_last_section_number at zero unless the sections
+        // are reorganized, and a section outside its own segment is discarded by
+        // receivers. Schedule sections carry over what MH-EIT said; p/f has no
+        // segmentation, and the field is defined as equal to
+        // last_section_number there.
+        // (EIT payload: transport_stream_id, original_network_id,
+        //  segment_last_section_number, last_table_id)
+        section.get()->setUInt8(4, mhEit.isPf() ? mhEit.lastSectionNumber
+                                                : mhEit.segmentLastSectionNumber);
 
         packetizer.addSection(section);
         ts::TSPacketVector packets;
