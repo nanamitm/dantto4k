@@ -903,8 +903,10 @@ void RemuxerHandler::onMhEit(const MmtTlv::MhEit& mhEit) {
 
     // One MH-EIT section carries one set of section numbers. If the events did
     // not fit into a single TS section, every section would go out claiming the
-    // same section_number and a receiver would keep only one of them.
+    // same section_number and a receiver would keep only one of them. Dropping
+    // the table loses those events, so count it rather than failing silently.
     if (table.sectionCount() > 1) {
+        eitSectionDropCount++;
         return;
     }
 

@@ -1024,6 +1024,10 @@ int main(int argc, char* argv[]) {
         if (!args.decodeMmts && handler.getAdtsDropCount() > 0) {
             std::cout << "ADTS conversion drop: " << handler.getAdtsDropCount() << std::endl;
         }
+        if (!args.decodeMmts && handler.getEitSectionDropCount() > 0) {
+            std::cout << "EIT section drop (too large for one TS section): "
+                << handler.getEitSectionDropCount() << std::endl;
+        }
     }
     demuxer.clear();
 

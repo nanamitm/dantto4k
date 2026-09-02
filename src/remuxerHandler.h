@@ -84,6 +84,8 @@ public:
 	void setPtsOffset(int64_t offset90k) { ptsOffset90k = offset90k; }
 	void clear();
 	uint64_t getAdtsDropCount() const { return adtsDropCount; }
+	// MH-EIT sections that did not fit into a single TS section and were dropped.
+	uint64_t getEitSectionDropCount() const { return eitSectionDropCount; }
 
 private:
 	enum class PesState {
@@ -107,6 +109,7 @@ private:
 	std::unordered_map<uint32_t, std::unordered_map<uint32_t, arib::ttml::DrcsGlyph>> mapSubtitleDrcsGlyphs;
 	std::unordered_map<uint32_t, std::vector<std::string>> mapPendingSubtitleTtml;
 	uint64_t adtsDropCount{0};
+	uint64_t eitSectionDropCount{0};
 	int tsid{-1};
 	uint64_t lastPcr{};
 	uint64_t lastWrittenPcr{};
