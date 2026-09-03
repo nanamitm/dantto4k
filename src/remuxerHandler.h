@@ -86,6 +86,8 @@ public:
 	uint64_t getAdtsDropCount() const { return adtsDropCount; }
 	// MH-EIT sections that did not fit into a single TS section and were dropped.
 	uint64_t getEitSectionDropCount() const { return eitSectionDropCount; }
+	// Subtitle documents dropped because no timeline could be anchored.
+	uint64_t getSubtitleTimelineDropCount() const { return subtitleTimelineDropCount; }
 
 private:
 	enum class PesState {
@@ -99,6 +101,7 @@ private:
 		std::optional<uint64_t> pts = std::nullopt);
 	void writeCaptionManagementData(uint64_t pts);
 	void convertAndWriteSubtitle(const MmtTlv::MmtStream& mmtStream, const std::string& ttml);
+	std::optional<uint64_t> subtitleBasePts(const MmtTlv::AdditionalAribSubtitleInfo& subtitleInfo) const;
 	MmtTlv::MmtTlvDemuxer& demuxer;
 	OutputCallback outputCallback;
 	std::unordered_map<uint16_t, uint16_t> mapService2Pid;
@@ -110,6 +113,7 @@ private:
 	std::unordered_map<uint32_t, std::vector<std::string>> mapPendingSubtitleTtml;
 	uint64_t adtsDropCount{0};
 	uint64_t eitSectionDropCount{0};
+	uint64_t subtitleTimelineDropCount{0};
 	int tsid{-1};
 	uint64_t lastPcr{};
 	uint64_t lastWrittenPcr{};

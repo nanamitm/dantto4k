@@ -301,11 +301,14 @@ namespace B24 {
 class B24SubtitleOutput {
 public:
     B24SubtitleOutput() = default;
-    B24SubtitleOutput(std::vector<uint8_t> pesData, std::optional<uint64_t> begin)
-        : pesData(pesData), begin(begin) {}
+    B24SubtitleOutput(std::vector<uint8_t> pesData, std::optional<uint64_t> begin, bool clear = false)
+        : pesData(pesData), begin(begin), clear(clear) {}
 
     std::vector<uint8_t> pesData;
     std::optional<uint64_t> begin;
+    // True when this statement only clears what is on screen. Such a page has
+    // no content of its own, so it must never be scheduled ahead of the clock.
+    bool clear{false};
 };
 
 class B24SubtitleConverter {

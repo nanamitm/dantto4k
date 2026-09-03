@@ -69,6 +69,15 @@ namespace {
 // slot anyway, so the oldest one goes first.
 constexpr size_t MAX_PENDING_SUBTITLE_TTML = 32;
 
+// How far ahead of the media clock a subtitle document's own reference time is
+// still believed. Beyond this the reference is treated as broken and the clock
+// is used instead. Measured over 127 caption documents from a 4K capture, the
+// reference timeline ran between 0.65 s and 0.00 s *behind* the clock and never
+// ahead of it, so this bound is deliberately far looser than anything observed:
+// it only has to separate a plausible lead from the failure it guards against,
+// a zero or stale NTP reference, which is off by hours or decades.
+constexpr uint64_t kMaxSubtitleLead90k = 30 * 90000;
+
 int convertRunningStatus(int runningStatus) {
     switch (runningStatus) {
     case 0:
@@ -281,25 +290,85 @@ void RemuxerHandler::convertAndWriteSubtitle(const MmtTlv::MmtStream& mmtStream,
         return;
     }
 
-    const auto currentPts = lastPcr / 300;
-    if (subtitleInfo->tmd == 0b1111) {
-        for (const auto& pesData : output) {
-            writeSubtitle(mmtStream, pesData, currentPts);
-        }
+    const uint64_t clockPts = lastPcr / 300;
+    const auto basePts = subtitleInfo->tmd == 0b1111
+        ? std::nullopt
+        : subtitleBasePts(*subtitleInfo);
+
+    if (!basePts && clockPts == 0) {
+        // Neither a reference time nor a media clock: there is nothing to place
+        // the document against, and guessing would put it at PTS ~0 where no
+        // player will show it.
+        subtitleTimelineDropCount++;
+        subtitleDebugLog("subtitle no timeline anchor, dropping stream=" +
+            std::to_string(mmtStream.getStreamIndex()));
         return;
     }
 
-    const auto referencePts = subtitleInfo->referenceStartTime.toPtsValue();
-    for (const auto& pesData : output) {
-        if (!pesData.begin) {
-            continue;
-        }
-        const auto pts = referencePts + static_cast<int64_t>(*pesData.begin * 90);
-        if (pts < 0) {
-            continue;
-        }
-        writeSubtitle(mmtStream, pesData, std::max(static_cast<uint64_t>(pts), currentPts));
+    uint64_t base = basePts.value_or(clockPts);
+    uint64_t firstPts = base + output.front().begin.value_or(0) * 90;
+
+    // A reference time far ahead of the clock is not a caption scheduled for
+    // later, it is a broken descriptor - a stale reference carried over from a
+    // previous program, or one that never got a real NTP value. Placing the
+    // document there means it is never shown, so fall back to the clock.
+    // Captions are muxed close to the time they are displayed; the window only
+    // has to be wide enough to cover that lead.
+    if (clockPts != 0 && firstPts > clockPts + kMaxSubtitleLead90k) {
+        subtitleDebugLog("subtitle reference time implausible, using clock"
+            " base=" + std::to_string(base) +
+            " first=" + std::to_string(firstPts) +
+            " clock=" + std::to_string(clockPts));
+        base = clockPts;
+        firstPts = base + output.front().begin.value_or(0) * 90;
     }
+
+    // One shift for the whole document. Anchoring each cue on the clock
+    // independently re-spaces them by mux timing, which collapses a page of
+    // cues onto a single timestamp and makes fixed-duration captions overlap.
+    // Outputs arrive in ascending time order (build_render_actions() walks a
+    // time-ordered map), so the first one carries the earliest offset.
+    const uint64_t shift = firstPts < clockPts ? clockPts - firstPts : 0;
+
+    subtitleDebugLog("subtitle timeline stream=" + std::to_string(mmtStream.getStreamIndex()) +
+        " base=" + std::to_string(base) +
+        " first=" + std::to_string(firstPts) +
+        " clock=" + std::to_string(clockPts) +
+        " lead=" + std::to_string(static_cast<int64_t>(firstPts) - static_cast<int64_t>(clockPts)) +
+        " shift=" + std::to_string(shift));
+
+    for (const auto& pesData : output) {
+        // An output with no begin time carries no timing of its own: either the
+        // leading cue had no begin attribute, or the document had no cues at all
+        // and this is the clear-screen statement. Both belong at the document
+        // base. A clear additionally must not be scheduled ahead of the clock,
+        // or what is on screen stays there until the clock catches up.
+        uint64_t pts = base + pesData.begin.value_or(0) * 90 + shift;
+        if (pesData.clear && clockPts != 0 && pts > clockPts) {
+            pts = clockPts;
+        }
+        writeSubtitle(mmtStream, pesData, pts);
+    }
+}
+
+// The PTS that TTML time zero maps to, or nullopt when the stream signalled no
+// usable reference time and the media clock has to stand in.
+std::optional<uint64_t> RemuxerHandler::subtitleBasePts(
+    const MmtTlv::AdditionalAribSubtitleInfo& subtitleInfo) const {
+    // reference_start_time is only carried when tmd is 0b0010. Every other
+    // value leaves it zero-initialized, and a zero NTP timestamp converts to a
+    // large negative PTS rather than to the epoch - which used to make every
+    // cue fail a `pts < 0` check and disappear.
+    if (subtitleInfo.tmd != 0b0010 || subtitleInfo.referenceStartTime.seconds == 0) {
+        return std::nullopt;
+    }
+
+    const int64_t pts = subtitleInfo.referenceStartTime.toPtsValue();
+    if (pts < 0) {
+        return std::nullopt;
+    }
+
+    return static_cast<uint64_t>(pts);
 }
 
 void RemuxerHandler::onPacketDrop(uint16_t packetId, const MmtTlv::MmtStream* mmtStream) {

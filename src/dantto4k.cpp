@@ -1028,6 +1028,10 @@ int main(int argc, char* argv[]) {
             std::cout << "EIT section drop (too large for one TS section): "
                 << handler.getEitSectionDropCount() << std::endl;
         }
+        if (!args.decodeMmts && handler.getSubtitleTimelineDropCount() > 0) {
+            std::cout << "Subtitle drop (no timeline anchor): "
+                << handler.getSubtitleTimelineDropCount() << std::endl;
+        }
     }
     demuxer.clear();
 

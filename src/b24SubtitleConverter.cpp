@@ -60,6 +60,7 @@ bool B24SubtitleConverter::convert(const std::string& input, std::list<B24Subtit
             converted.begin
                 ? std::optional<uint64_t>{static_cast<uint64_t>(converted.begin->count())}
                 : std::nullopt,
+            converted.clear && converted.data.empty(),
         });
     }
 
