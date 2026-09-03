@@ -28,7 +28,7 @@
 #include "acasHandler.h"
 #include "smartCard.h"
 #include "config.h"
-#include "aribTextEncoder.h"
+#include "aribCharsetEncoder.h"
 #include "ttml/parser.h"
 #include "ttml/resolver.h"
 #include "ttml/b24_converter.h"
@@ -76,7 +76,7 @@ enum CheckId {
 };
 
 Check checks[kCheckCount] = {
-    {"arib-pua-drcs", true, "caption text uses a private-use codepoint the ARIB tables can encode; is_drcs_codepoint() calls it DRCS and the caption is withheld for a glyph that never arrives", 0, {}},
+    {"arib-pua-drcs", true, "caption text uses a private-use codepoint the ARIB charset tables cover; is_drcs_codepoint() calls it DRCS anyway, so the caption waits for a glyph the broadcast has no reason to send", 0, {}},
     {"p-style-ref", true, "<p style=\"...\"> - a paragraph style reference, which the parser still never reads", 0, {}},
     {"nested-span", true, "<span> inside a <span> - a hard parse error that discards the whole document", 0, {}},
     {"oversized-length", true, "a style length large enough to overflow the double-to-uint32_t casts in the B24 encoder", 0, {}},
@@ -121,14 +121,21 @@ std::string toUtf8(uint32_t cp) {
 }
 
 // The charset tables decide this, not a list copied out of them: a codepoint the
-// caption encoder can emit produces bytes, one it cannot produces nothing.
+// tables cover produces bytes, one they do not produces nothing.
+//
+// This asks arib::charset::encode() rather than arib::text::encode(). The latter
+// first runs the gaiji substitutions, which map some private-use codepoints onto
+// a replacement - U+E11A becomes the geta mark - so it answers "yes" for
+// codepoints the tables cannot actually represent. Those are real DRCS: the
+// broadcast ships a glyph for them, and rendering that glyph beats rendering a
+// placeholder. Only a codepoint the tables cover is a false DRCS positive.
 bool encodableAsArib(uint32_t cp) {
     static std::map<uint32_t, bool> cache;
     const auto it = cache.find(cp);
     if (it != cache.end()) {
         return it->second;
     }
-    const bool ok = !arib::text::encode(toUtf8(cp), arib::charset::EncodeMode::Caption).empty();
+    const bool ok = !arib::charset::encode(toUtf8(cp), arib::charset::EncodeMode::Caption).empty();
     cache.emplace(cp, ok);
     return ok;
 }
@@ -327,6 +334,16 @@ int runSelfTest() {
         scanTtmlText(std::string(kHead) + "<body><div><p region='r'><span style='s'>" +
                      toUtf8(0xF8F0) + "</span></p></div></body></tt>");
         report(checks[kAribPuaDrcs].hits == before, "arib-pua-drcs stays quiet for a real DRCS codepoint");
+    }
+    // U+E11A is not in the tables; it only survives arib::text::encode() because
+    // the gaiji substitutions turn it into a geta mark. Broadcasts do ship a DRCS
+    // glyph for it, so calling it a false positive would itself be one.
+    {
+        const auto before = checks[kAribPuaDrcs].hits;
+        scanTtmlText(std::string(kHead) + "<body><div><p region='r'><span style='s'>" +
+                     toUtf8(0xE11A) + "</span></p></div></body></tt>");
+        report(checks[kAribPuaDrcs].hits == before,
+               "arib-pua-drcs stays quiet for a codepoint only the gaiji table maps");
     }
 
     {
