@@ -4,3 +4,5 @@ dist/
 BonRecTest
 dantto4k_dev.sln
 *.log
+*.obj
+*.exe
