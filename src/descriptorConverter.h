@@ -168,8 +168,6 @@ struct DescriptorConverter<MmtTlv::MhExtendedEventDescriptor> {
                 memcpy(&tsDescriptor[7 + pos], aribItemChars[i].data(), aribItemChars[i].size());
                 pos += aribItemChars[i].size();
             }
-
-            i++;
         }
 
         tsDescriptor[7 + pos] = static_cast<uint8_t>(textBlock.size());
