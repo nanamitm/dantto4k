@@ -18,8 +18,13 @@ namespace ttml {
 namespace {
 
 enum class StyleScope {
+    // <p> and <span>: geometry is not meaningful on a content element.
     Content,
-    Region,
+    // <region>, and the <style> definitions in <head>. A definition can be
+    // referenced by a region, so it has to be able to carry geometry too -
+    // gating this on the element being a <region> silently left every region
+    // that took its origin/extent from a referenced style with no geometry.
+    Layout,
 };
 
 SourceLocation get_source_location(const pugi::xml_node& node, std::string_view source) {
@@ -235,10 +240,44 @@ private:
         if (const auto error = parse_region_ref(node, paragraph.region)) {
             return error;
         }
+        if (const auto error = parse_style_properties(node, paragraph.style, StyleScope::Content)) {
+            return error;
+        }
+
+        // Text and <br/> may sit directly inside <p>, not only inside a <span>.
+        // Only spans carry content, so such a run goes into an anonymous span -
+        // a fresh one each time, so that it inherits from the paragraph instead
+        // of picking up the styling of whichever span happened to precede it.
+        // Ignoring them dropped the line breaks between spans and ran the lines
+        // together.
+        bool in_anonymous_span = false;
+        const auto append_content = [&](ast::SpanContent content) {
+            if (!in_anonymous_span) {
+                paragraph.spans.emplace_back();
+                in_anonymous_span = true;
+            }
+            paragraph.spans.back().content.push_back(std::move(content));
+        };
 
         for (auto child = node.first_child(); !child.empty(); child = child.next_sibling()) {
-            std::string_view child_name = child.name();
+            if (child.type() == pugi::node_pcdata || child.type() == pugi::node_cdata) {
+                append_content(std::string(child.value()));
+                continue;
+            }
+            if (child.type() != pugi::node_element) {
+                continue;
+            }
+
+            const std::string_view child_name = child.name();
+            if (child_name == "br") {
+                if (child.first_child()) {
+                    return make_error("br element must be empty", child);
+                }
+                append_content(ast::LineBreak{});
+                continue;
+            }
             if (child_name == "span") {
+                in_anonymous_span = false;
                 const auto error = parse_span(child, paragraph);
                 if (error) {
                     return error;
@@ -272,6 +311,9 @@ private:
             return error;
         }
         if (const auto error = parse_style_refs(node, span.style_refs)) {
+            return error;
+        }
+        if (const auto error = parse_style_properties(node, span.style, StyleScope::Content)) {
             return error;
         }
 
@@ -348,7 +390,7 @@ private:
                 return refs_error;
             }
 
-            const auto error = parse_style_properties(child, definition.style, StyleScope::Content);
+            const auto error = parse_style_properties(child, definition.style, StyleScope::Layout);
             if (error) {
                 return error;
             }
@@ -377,7 +419,7 @@ private:
                 }
                 output.color = color;
             }
-            else if (attr_name == "tts:extent" && scope == StyleScope::Region) {
+            else if (attr_name == "tts:extent" && scope == StyleScope::Layout) {
                 const auto extent = parse_length_pair(attr_value, SingleLengthMode::Reject);
                 if (!extent || extent->x < 0.0 || extent->y < 0.0) {
                     return make_error("invalid value for tts:extent", style);
@@ -433,7 +475,7 @@ private:
                     output.line_height = *line_height;
                 }
             }
-            else if (attr_name == "tts:origin" && scope == StyleScope::Region) {
+            else if (attr_name == "tts:origin" && scope == StyleScope::Layout) {
                 const auto origin = parse_length_pair(attr_value, SingleLengthMode::Reject);
                 const auto is_in_range = [](double value) {
                     return value >= static_cast<double>(std::numeric_limits<std::int32_t>::min()) &&
@@ -556,7 +598,7 @@ private:
             if (refs_error) {
                 return refs_error;
             }
-            const auto error = parse_style_properties(child, definition.style, StyleScope::Region);
+            const auto error = parse_style_properties(child, definition.style, StyleScope::Layout);
             if (error) {
                 return error;
             }

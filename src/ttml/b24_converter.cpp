@@ -106,6 +106,13 @@ std::vector<std::string> split_by_null(std::string_view data) {
     return output;
 }
 
+bool span_has_text(const resolved::Span& span) {
+    return std::ranges::any_of(span.content, [](const auto& content) {
+        const auto* text = std::get_if<std::string>(&content);
+        return text && !text->empty();
+    });
+}
+
 void append_span(RegionBlock& block, const resolved::Span& span) {
     if (block.lines.empty()) {
         block.lines.emplace_back();
@@ -141,10 +148,13 @@ public:
         }
 
         for (const auto& paragraph : document_.division->paragraphs) {
-            // ARIB-TTML has no initial font size, so every span must resolve one.
+            // ARIB-TTML has no initial font size, so every span that draws text
+            // must resolve one. A span holding only a line break draws nothing
+            // and contributes no styling, so requiring a size there would drop
+            // the whole paragraph over a <br/> between two spans.
             const bool has_missing_font_size = std::ranges::any_of(paragraph.spans,
                 [](const resolved::Span& span) {
-                    return !span.style.font_size;
+                    return !span.style.font_size && span_has_text(span);
                 }
             );
             if (has_missing_font_size) {
@@ -182,13 +192,14 @@ public:
                     continue;
                 }
 
-                const bool has_text = std::ranges::any_of(span.content,
+                // A line break renders even though it carries no text.
+                const bool has_content = std::ranges::any_of(span.content,
                     [](const auto& content) {
                         const auto* text = std::get_if<std::string>(&content);
-                        return text && !text->empty();
+                        return text ? !text->empty() : true;
                     }
                 );
-                if (!has_text) {
+                if (!has_content) {
                     continue;
                 }
 

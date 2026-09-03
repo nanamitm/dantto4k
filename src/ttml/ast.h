@@ -37,6 +37,9 @@ struct Span {
     Timing timing;
     std::optional<std::string> region;
     std::vector<std::string> style_refs;
+    // tts:* attributes written directly on the element. They override
+    // whatever the referenced styles set.
+    StyleProperties style;
     std::vector<SpanContent> content;
 };
 
@@ -44,6 +47,7 @@ struct Paragraph {
     std::optional<std::string> id;
     Timing timing;
     std::optional<std::string> region;
+    StyleProperties style;
     std::vector<Span> spans;
 };
 

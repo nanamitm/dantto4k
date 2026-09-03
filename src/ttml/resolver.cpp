@@ -190,6 +190,9 @@ public:
             if (resolved_paragraph.region) {
                 resolved_paragraph.style = inherited_style(resolved_paragraph.region->style);
             }
+            // tts:* written on the <p> itself wins over what the region set,
+            // and the spans below inherit the result.
+            merge_style(resolved_paragraph.style, paragraph.style);
 
             for (const auto& span : paragraph.spans) {
                 auto span_timing = resolve_timing(span.timing, resolved_paragraph.timing, mode_);
@@ -217,6 +220,9 @@ public:
                         .error = std::move(error)
                     };
                 }
+                // Inline tts:* on the <span> is the most specific source, so
+                // it is applied last.
+                merge_style(resolved_span.style, span.style);
                 complete_style(resolved_span.style);
                 resolved_span.content = span.content;
                 resolved_paragraph.spans.push_back(std::move(resolved_span));
