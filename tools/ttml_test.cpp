@@ -221,6 +221,11 @@ int main() {
               "the shared SVG parser reports an unsupported command");
         check(rasterize("M100,100 A400,400 0 1 0 900,900 z").empty(),
               "an elliptical arc still yields no pattern");
+        // A path that draws something before reaching the arc used to rasterize
+        // the fragment, which is a wrong shape rather than a partial one.
+        check(rasterize("M100,100 L900,100 L900,900"
+                        " A400,400 0 1 0 100,100 z").empty(),
+              "and neither does the drawable fragment in front of one");
     }
 
     // The resource only has to name each glyph's codepoint once, and it is not

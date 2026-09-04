@@ -242,7 +242,7 @@ struct PathParser {
                     const Point p1 = applyRelative({ *x1, *y1 }, current, relative);
                     const Point p2 = applyRelative({ *x2, *y2 }, current, relative);
                     const Point p3 = applyRelative({ *x3, *y3 }, current, relative);
-                    appendCubic(current, p1, p2, p3);
+                    appendCubic(p1, p2, p3);
                     control = p2;
                     current = p3;
                     lastCurve = 'C';
@@ -264,7 +264,7 @@ struct PathParser {
                     const Point p1 = lastCurve == 'C' ? reflect(control, current) : current;
                     const Point p2 = applyRelative({ *x2, *y2 }, current, relative);
                     const Point p3 = applyRelative({ *x3, *y3 }, current, relative);
-                    appendCubic(current, p1, p2, p3);
+                    appendCubic(p1, p2, p3);
                     control = p2;
                     current = p3;
                     lastCurve = 'C';
@@ -371,7 +371,9 @@ struct PathParser {
         result.commands.push_back({ SvgPathCommandType::LineTo, point });
     }
 
-    void appendCubic(Point, Point p1, Point p2, Point p3) {
+    // The start point is not stored: a command list is contiguous, so every
+    // consumer already knows it as the point the previous command ended on.
+    void appendCubic(Point p1, Point p2, Point p3) {
         result.commands.push_back({ SvgPathCommandType::CubicTo, p3, p1, p2 });
     }
 
@@ -380,7 +382,7 @@ struct PathParser {
                         p0.y + (p1.y - p0.y) * 2.0 / 3.0 };
         const Point c2{ p2.x + (p1.x - p2.x) * 2.0 / 3.0,
                         p2.y + (p1.y - p2.y) * 2.0 / 3.0 };
-        appendCubic(p0, c1, c2, p2);
+        appendCubic(c1, c2, p2);
     }
 
     static Point reflect(Point control, Point current) {
@@ -419,10 +421,10 @@ std::vector<std::vector<Point>> flattenPath(const SvgPath& path) {
         case SvgPathCommandType::CubicTo:
         {
             const Point p0 = current;
+            if (paths.empty()) paths.push_back({});
             for (int i = 1; i <= kFlattenSteps; ++i) {
                 const double t = static_cast<double>(i) / kFlattenSteps;
                 const double mt = 1.0 - t;
-                if (paths.empty()) paths.push_back({});
                 paths.back().push_back({
                     mt * mt * mt * p0.x + 3 * mt * mt * t * command.control1.x +
                         3 * mt * t * t * command.control2.x + t * t * t * command.point.x,
@@ -458,9 +460,15 @@ bool pointInPath(const std::vector<std::vector<Point>>& paths, double x, double 
 
 std::vector<uint8_t> rasterizeGlyph(const DrcsGlyph& glyph, uint8_t width, uint8_t height) {
     const SvgPath parsed = parse_svg_path(glyph.path);
-    if (parsed.unsupportedCommand) {
+    if (!parsed.complete()) {
+        // The fragment before the command we cannot draw is not the glyph, and
+        // a pattern drawn from it is a wrong shape rather than a partial one.
+        // Leaving the DRCS code undefined is the honest answer, and it is what
+        // every other consumer of the shared parser does.
         subtitleDebugLog("DRCS glyph " + formatCodepoint(glyph.codepoint) +
-            " path stopped at unimplemented command '" + std::string(1, parsed.unsupportedCommand) + "'");
+            " not rasterized: path stops at unimplemented command '" +
+            std::string(1, parsed.unsupportedCommand) + "'");
+        return {};
     }
     auto paths = flattenPath(parsed);
     if (paths.empty()) {
