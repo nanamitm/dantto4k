@@ -223,6 +223,38 @@ int main() {
               "an elliptical arc still yields no pattern");
     }
 
+    // The resource only has to name each glyph's codepoint once, and it is not
+    // always on the glyph element. Losing it drops the whole font, and the
+    // caption then waits forever for a glyph that already arrived.
+    std::printf("7. DRCS resources that name the codepoint somewhere else\n");
+    {
+        const auto face = parse_svg_glyph_resource(
+            "<svg><defs><font><font-face units-per-em='1024' ascent='974' descent='50'"
+            " unicode-range='U+E123-E123'/>"
+            "<glyph d='M100,100 L900,100 L900,900 L100,900 z'/></font></defs></svg>");
+        check(face.size() == 1 && face.count(0xE123) == 1,
+              "a codepoint carried only by the font-face unicode-range is used");
+        check(face.count(0xE123) == 1 && face.at(0xE123).unitsPerEm == 1024 &&
+                  face.at(0xE123).ascent == 974,
+              "the font-face metrics still come with it");
+
+        const auto onGlyph = parse_svg_glyph_resource(
+            "<svg><defs><font><font-face units-per-em='1024'/>"
+            "<glyph unicode-range='U+E456' d='M1,1 L2,2 z'/></font></defs></svg>");
+        check(onGlyph.count(0xE456) == 1,
+              "a unicode-range on the glyph itself is used too");
+
+        // pugixml expands a real character reference, so only a resource that
+        // escaped its own gets here with the reference spelled out.
+        const auto escaped = parse_svg_glyph_resource(
+            "<svg><defs><font><font-face units-per-em='1024'/>"
+            "<glyph unicode='&amp;#xE789;' d='M1,1 L2,2 z'/></font></defs></svg>");
+        check(escaped.count(0xE789) == 1,
+              "an escaped character reference resolves to its codepoint");
+        check(escaped.count(0x26) == 0,
+              "and is not registered under the ampersand that starts it");
+    }
+
     std::printf("\n%s (%d failure(s))\n", failures ? "FAILED" : "ALL PASS", failures);
     return failures ? 1 : 0;
 }

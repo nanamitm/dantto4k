@@ -119,6 +119,31 @@ std::optional<uint32_t> parseCodepointAttribute(std::string value) {
     if (value.empty()) {
         return std::nullopt;
     }
+    // A resource that escapes its own character reference ("&amp;#xE001;")
+    // reaches us with the reference still spelled out, because pugixml only
+    // expands the unescaped form. Reading it as UTF-8 would register the glyph
+    // under U+0026 instead of failing, which is worse than not finding it.
+    if (value.rfind("&#", 0) == 0) {
+        size_t pos = 2;
+        int base = 10;
+        if (pos < value.size() && (value[pos] == 'x' || value[pos] == 'X')) {
+            ++pos;
+            base = 16;
+        }
+        const auto end = value.find(';', pos);
+        const std::string digits =
+            value.substr(pos, end == std::string::npos ? std::string::npos : end - pos);
+        if (digits.empty()) {
+            return std::nullopt;
+        }
+        try {
+            const auto codepoint = static_cast<uint32_t>(std::stoul(digits, nullptr, base));
+            return codepoint == 0 ? std::nullopt : std::optional<uint32_t>(codepoint);
+        }
+        catch (const std::exception&) {
+            return std::nullopt;
+        }
+    }
     if (value.rfind("U+", 0) == 0 || value.rfind("u+", 0) == 0) {
         value = value.substr(2);
         const auto dash = value.find('-');
@@ -530,11 +555,13 @@ DrcsGlyphMap parse_svg_glyph_resource(const std::string& input) {
         int unitsPerEm = font.attribute("horiz-adv-x").as_int(1024);
         int ascent = 880;
         int descent = -120;
+        std::optional<uint32_t> faceCodepoint;
         for (auto fontFace : font.children()) {
             if (nameContains(fontFace, "font-face")) {
                 unitsPerEm = fontFace.attribute("units-per-em").as_int(unitsPerEm);
                 ascent = fontFace.attribute("ascent").as_int(ascent);
                 descent = fontFace.attribute("descent").as_int(descent);
+                faceCodepoint = parseCodepointAttribute(fontFace.attribute("unicode-range").as_string());
                 break;
             }
         }
@@ -544,6 +571,16 @@ DrcsGlyphMap parse_svg_glyph_resource(const std::string& input) {
                 continue;
             }
             auto codepoint = parseCodepointAttribute(glyph.attribute("unicode").as_string());
+            if (!codepoint) {
+                codepoint = parseCodepointAttribute(glyph.attribute("unicode-range").as_string());
+            }
+            if (!codepoint) {
+                // A broadcast resource routinely ships one glyph per font and
+                // names the codepoint only once, on the font-face's
+                // unicode-range. Dropping the glyph there loses the whole
+                // resource, since the font holds nothing else.
+                codepoint = faceCodepoint;
+            }
             if (!codepoint) {
                 continue;
             }
