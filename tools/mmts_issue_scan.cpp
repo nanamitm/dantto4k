@@ -46,6 +46,8 @@
 
 void subtitleDebugLog(const std::string&) {}
 
+namespace { bool g_dumpDrcs = false; }
+
 namespace {
 
 struct Check {
@@ -95,6 +97,15 @@ std::string formatCp(uint32_t cp) {
     char buf[16];
     std::snprintf(buf, sizeof(buf), "U+%04X", cp);
     return buf;
+}
+
+// The check only says a glyph produced no pattern. Whether that is the
+// broadcaster shipping something odd or the path parser giving up needs the
+// path itself, so --dump-drcs prints it.
+void dumpDrcsGlyph(uint32_t cp, const arib::ttml::DrcsGlyph& glyph) {
+    std::printf("  DRCS %s units=%d ascent=%d descent=%d d=%s\n",
+                formatCp(cp).c_str(), glyph.unitsPerEm, glyph.ascent, glyph.descent,
+                glyph.path.c_str());
 }
 
 std::string toUtf8(uint32_t cp) {
@@ -389,6 +400,9 @@ public:
                 }
                 if (arib::ttml::build_drcs_data_unit(allocator.codes(), glyphs).empty()) {
                     checks[kDrcsUnrasterizable].hit(formatCp(entry.first));
+                    if (g_dumpDrcs && dumped_.insert(entry.first).second) {
+                        dumpDrcsGlyph(entry.first, entry.second);
+                    }
                 }
             }
             glyphsByStream_[index].insert(glyphs.begin(), glyphs.end());
@@ -468,6 +482,7 @@ public:
 
 private:
     std::map<uint32_t, arib::ttml::DrcsGlyphMap> glyphsByStream_;
+    std::set<uint32_t> dumped_;
 };
 
 } // namespace
@@ -483,7 +498,10 @@ int main(int argc, char* argv[]) {
         if (arg == "--selftest") {
             return runSelfTest();
         }
-        if (arg == "--frontend-descrambled") {
+        if (arg == "--dump-drcs") {
+            g_dumpDrcs = true;
+        }
+        else if (arg == "--frontend-descrambled") {
             descrambled = true;
         }
         else if (arg == "--reader" && i + 1 < argc) {
@@ -503,6 +521,7 @@ int main(int argc, char* argv[]) {
     if (!path) {
         std::fprintf(stderr,
                      "Usage: mmts_issue_scan <input.mmts> [--frontend-descrambled] [--reader NAME] [--limit-mb N]\n"
+                     "                        [--dump-drcs]\n"
                      "       mmts_issue_scan --selftest\n");
         return 2;
     }
