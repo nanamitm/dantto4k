@@ -26,6 +26,40 @@ struct DrcsGlyph {
 
 using DrcsGlyphMap = std::unordered_map<uint32_t, DrcsGlyph>;
 
+struct SvgPathPoint {
+    double x{};
+    double y{};
+};
+
+enum class SvgPathCommandType {
+    MoveTo,
+    LineTo,
+    CubicTo,
+    ClosePath,
+};
+
+// Normalized SVG path command. H/V are represented as LineTo, while Q/T/S
+// are converted to CubicTo after relative coordinates and reflected control
+// points have been resolved. ClosePath.point is the subpath start.
+struct SvgPathCommand {
+    SvgPathCommandType type{SvgPathCommandType::MoveTo};
+    SvgPathPoint point{};
+    SvgPathPoint control1{};
+    SvgPathPoint control2{};
+};
+
+struct SvgPath {
+    std::vector<SvgPathCommand> commands;
+    char unsupportedCommand{};
+
+    [[nodiscard]] bool complete() const { return unsupportedCommand == 0; }
+};
+
+// Parses and normalizes the SVG path dialect used by ARIB-TTML glyph
+// resources. A partial command list can be returned with unsupportedCommand
+// set; consumers must not mistake that for a complete glyph.
+[[nodiscard]] SvgPath parse_svg_path(std::string_view path);
+
 [[nodiscard]] bool is_drcs_codepoint(uint32_t codepoint);
 
 // Parses an SVG font resource into the glyphs it defines. Returns an empty map

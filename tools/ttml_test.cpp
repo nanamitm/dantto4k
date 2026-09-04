@@ -206,8 +206,19 @@ int main() {
                                              " L900,900 L100,900 z"),
               "S matches the cubic it stands for");
 
+        const auto normalized = parse_svg_path("M100,500 Q300,100 500,500 T900,500 z");
+        check(normalized.complete() && normalized.commands.size() == 4,
+              "the shared SVG parser returns a complete normalized path");
+        check(normalized.commands.size() >= 3 &&
+                  normalized.commands[1].type == SvgPathCommandType::CubicTo &&
+                  normalized.commands[2].type == SvgPathCommandType::CubicTo,
+              "Q and T are exposed to other renderers as cubic curves");
+
         // The elliptical arc is still unimplemented. It has to stay a clean
         // no-pattern rather than a wrong one, and the parser now names it.
+        const auto arcPath = parse_svg_path("M100,100 A400,400 0 1 0 900,900 z");
+        check(!arcPath.complete() && arcPath.unsupportedCommand == 'A',
+              "the shared SVG parser reports an unsupported command");
         check(rasterize("M100,100 A400,400 0 1 0 900,900 z").empty(),
               "an elliptical arc still yields no pattern");
     }

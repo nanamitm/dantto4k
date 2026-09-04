@@ -140,15 +140,12 @@ std::optional<uint32_t> parseCodepointAttribute(std::string value) {
     return readUtf8Codepoint(value, pos);
 }
 
-struct Point {
-    double x{};
-    double y{};
-};
+using Point = SvgPathPoint;
 
 struct PathParser {
     explicit PathParser(std::string_view text) : text(text) {}
 
-    std::vector<std::vector<Point>> parse() {
+    SvgPath parse() {
         char cmd = 0;
         Point current{};
         Point start{};
@@ -169,11 +166,11 @@ struct PathParser {
                 auto x = number();
                 auto y = number();
                 if (!x || !y) {
-                    return paths;
+                    return result;
                 }
                 current = applyRelative({ *x, *y }, current, relative);
                 start = current;
-                paths.push_back({ current });
+                result.commands.push_back({ SvgPathCommandType::MoveTo, current });
                 cmd = relative ? 'l' : 'L';
                 break;
             }
@@ -186,7 +183,7 @@ struct PathParser {
                         break;
                     }
                     current = applyRelative({ *x, *y }, current, relative);
-                    ensurePath().push_back(current);
+                    appendLine(current);
                 }
                 break;
             }
@@ -194,7 +191,7 @@ struct PathParser {
                 lastCurve = 0;
                 while (auto x = number()) {
                     current.x = relative ? current.x + *x : *x;
-                    ensurePath().push_back(current);
+                    appendLine(current);
                 }
                 break;
             }
@@ -202,7 +199,7 @@ struct PathParser {
                 lastCurve = 0;
                 while (auto y = number()) {
                     current.y = relative ? current.y + *y : *y;
-                    ensurePath().push_back(current);
+                    appendLine(current);
                 }
                 break;
             }
@@ -284,7 +281,7 @@ struct PathParser {
                 break;
             }
             case 'Z':
-                ensurePath().push_back(start);
+                result.commands.push_back({ SvgPathCommandType::ClosePath, start });
                 current = start;
                 lastCurve = 0;
                 cmd = 0;
@@ -294,12 +291,12 @@ struct PathParser {
                 // forever, since number() refuses to consume a command letter.
                 // What comes back is a fragment rather than a failure, so name
                 // the command that stopped it instead of returning silently.
-                unsupported = cmd;
-                return paths;
+                result.unsupportedCommand = cmd;
+                return result;
             }
             skipCommaWs();
         }
-        return paths;
+        return result;
     }
 
     bool skipWs() {
@@ -345,26 +342,20 @@ struct PathParser {
         return value;
     }
 
-    void appendCubic(Point p0, Point p1, Point p2, Point p3) {
-        for (int i = 1; i <= kFlattenSteps; ++i) {
-            const double t = static_cast<double>(i) / kFlattenSteps;
-            const double mt = 1.0 - t;
-            ensurePath().push_back({
-                mt * mt * mt * p0.x + 3 * mt * mt * t * p1.x + 3 * mt * t * t * p2.x + t * t * t * p3.x,
-                mt * mt * mt * p0.y + 3 * mt * mt * t * p1.y + 3 * mt * t * t * p2.y + t * t * t * p3.y
-            });
-        }
+    void appendLine(Point point) {
+        result.commands.push_back({ SvgPathCommandType::LineTo, point });
+    }
+
+    void appendCubic(Point, Point p1, Point p2, Point p3) {
+        result.commands.push_back({ SvgPathCommandType::CubicTo, p3, p1, p2 });
     }
 
     void appendQuadratic(Point p0, Point p1, Point p2) {
-        for (int i = 1; i <= kFlattenSteps; ++i) {
-            const double t = static_cast<double>(i) / kFlattenSteps;
-            const double mt = 1.0 - t;
-            ensurePath().push_back({
-                mt * mt * p0.x + 2 * mt * t * p1.x + t * t * p2.x,
-                mt * mt * p0.y + 2 * mt * t * p1.y + t * t * p2.y
-            });
-        }
+        const Point c1{ p0.x + (p1.x - p0.x) * 2.0 / 3.0,
+                        p0.y + (p1.y - p0.y) * 2.0 / 3.0 };
+        const Point c2{ p2.x + (p1.x - p2.x) * 2.0 / 3.0,
+                        p2.y + (p1.y - p2.y) * 2.0 / 3.0 };
+        appendCubic(p0, c1, c2, p2);
     }
 
     static Point reflect(Point control, Point current) {
@@ -379,23 +370,48 @@ struct PathParser {
         return p;
     }
 
-    std::vector<Point>& ensurePath() {
-        if (paths.empty()) {
-            paths.push_back({});
-        }
-        return paths.back();
-    }
-
-    // A 36x36 cell resolves nothing finer, and every curve in a broadcast
-    // glyph is a short stroke.
-    static constexpr int kFlattenSteps = 18;
-
     std::string_view text;
     size_t pos{};
-    std::vector<std::vector<Point>> paths;
-    // The command that stopped the parse, 0 if it ran to the end.
-    char unsupported{0};
+    SvgPath result;
 };
+
+std::vector<std::vector<Point>> flattenPath(const SvgPath& path) {
+    static constexpr int kFlattenSteps = 18;
+    std::vector<std::vector<Point>> paths;
+    Point current{};
+    for (const auto& command : path.commands) {
+        switch (command.type) {
+        case SvgPathCommandType::MoveTo:
+            current = command.point;
+            paths.push_back({ current });
+            break;
+        case SvgPathCommandType::LineTo:
+        case SvgPathCommandType::ClosePath:
+            current = command.point;
+            if (paths.empty()) paths.push_back({});
+            paths.back().push_back(current);
+            break;
+        case SvgPathCommandType::CubicTo:
+        {
+            const Point p0 = current;
+            for (int i = 1; i <= kFlattenSteps; ++i) {
+                const double t = static_cast<double>(i) / kFlattenSteps;
+                const double mt = 1.0 - t;
+                if (paths.empty()) paths.push_back({});
+                paths.back().push_back({
+                    mt * mt * mt * p0.x + 3 * mt * mt * t * command.control1.x +
+                        3 * mt * t * t * command.control2.x + t * t * t * command.point.x,
+                    mt * mt * mt * p0.y + 3 * mt * mt * t * command.control1.y +
+                        3 * mt * t * t * command.control2.y + t * t * t * command.point.y
+                });
+            }
+            current = command.point;
+            break;
+        }
+        }
+    }
+    return paths;
+}
 
 bool pointInPath(const std::vector<std::vector<Point>>& paths, double x, double y) {
     bool inside = false;
@@ -416,12 +432,12 @@ bool pointInPath(const std::vector<std::vector<Point>>& paths, double x, double 
 }
 
 std::vector<uint8_t> rasterizeGlyph(const DrcsGlyph& glyph, uint8_t width, uint8_t height) {
-    PathParser parser(glyph.path);
-    auto paths = parser.parse();
-    if (parser.unsupported) {
+    const SvgPath parsed = parse_svg_path(glyph.path);
+    if (parsed.unsupportedCommand) {
         subtitleDebugLog("DRCS glyph " + formatCodepoint(glyph.codepoint) +
-            " path stopped at unimplemented command '" + std::string(1, parser.unsupported) + "'");
+            " path stopped at unimplemented command '" + std::string(1, parsed.unsupportedCommand) + "'");
     }
+    auto paths = flattenPath(parsed);
     if (paths.empty()) {
         return {};
     }
@@ -475,6 +491,10 @@ void appendCaptionTextStateReset(std::string& output) {
 }
 
 } // namespace
+
+SvgPath parse_svg_path(std::string_view path) {
+    return PathParser(path).parse();
+}
 
 bool is_drcs_codepoint(uint32_t cp) {
     return (cp >= 0xE000 && cp <= 0xF8FF) || (cp >= 0xF0000 && cp <= 0xFFFFD) || (cp >= 0x100000 && cp <= 0x10FFFD);
