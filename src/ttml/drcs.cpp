@@ -152,6 +152,8 @@ struct PathParser {
         char cmd = 0;
         Point current{};
         Point start{};
+        Point control{};
+        char lastCurve = 0;
         while (skipWs()) {
             if (isCommand(peek())) {
                 cmd = get();
@@ -163,6 +165,7 @@ struct PathParser {
             const bool relative = std::islower(static_cast<unsigned char>(cmd)) != 0;
             switch (std::toupper(static_cast<unsigned char>(cmd))) {
             case 'M': {
+                lastCurve = 0;
                 auto x = number();
                 auto y = number();
                 if (!x || !y) {
@@ -175,6 +178,7 @@ struct PathParser {
                 break;
             }
             case 'L': {
+                lastCurve = 0;
                 while (true) {
                     auto x = number();
                     auto y = number();
@@ -187,6 +191,7 @@ struct PathParser {
                 break;
             }
             case 'H': {
+                lastCurve = 0;
                 while (auto x = number()) {
                     current.x = relative ? current.x + *x : *x;
                     ensurePath().push_back(current);
@@ -194,6 +199,7 @@ struct PathParser {
                 break;
             }
             case 'V': {
+                lastCurve = 0;
                 while (auto y = number()) {
                     current.y = relative ? current.y + *y : *y;
                     ensurePath().push_back(current);
@@ -211,29 +217,84 @@ struct PathParser {
                     if (!x1 || !y1 || !x2 || !y2 || !x3 || !y3) {
                         break;
                     }
-                    const Point p0 = current;
                     const Point p1 = applyRelative({ *x1, *y1 }, current, relative);
                     const Point p2 = applyRelative({ *x2, *y2 }, current, relative);
                     const Point p3 = applyRelative({ *x3, *y3 }, current, relative);
-                    for (int i = 1; i <= 18; ++i) {
-                        const double t = i / 18.0;
-                        const double mt = 1.0 - t;
-                        ensurePath().push_back({
-                            mt * mt * mt * p0.x + 3 * mt * mt * t * p1.x + 3 * mt * t * t * p2.x + t * t * t * p3.x,
-                            mt * mt * mt * p0.y + 3 * mt * mt * t * p1.y + 3 * mt * t * t * p2.y + t * t * t * p3.y
-                        });
-                    }
+                    appendCubic(current, p1, p2, p3);
+                    control = p2;
                     current = p3;
+                    lastCurve = 'C';
+                }
+                break;
+            }
+            case 'S': {
+                while (true) {
+                    auto x2 = number();
+                    auto y2 = number();
+                    auto x3 = number();
+                    auto y3 = number();
+                    if (!x2 || !y2 || !x3 || !y3) {
+                        break;
+                    }
+                    // A smooth curve takes its leading control point from the
+                    // reflection of the previous one; with no curve of the same
+                    // degree before it, the current point stands in.
+                    const Point p1 = lastCurve == 'C' ? reflect(control, current) : current;
+                    const Point p2 = applyRelative({ *x2, *y2 }, current, relative);
+                    const Point p3 = applyRelative({ *x3, *y3 }, current, relative);
+                    appendCubic(current, p1, p2, p3);
+                    control = p2;
+                    current = p3;
+                    lastCurve = 'C';
+                }
+                break;
+            }
+            case 'Q': {
+                while (true) {
+                    auto x1 = number();
+                    auto y1 = number();
+                    auto x2 = number();
+                    auto y2 = number();
+                    if (!x1 || !y1 || !x2 || !y2) {
+                        break;
+                    }
+                    const Point p1 = applyRelative({ *x1, *y1 }, current, relative);
+                    const Point p2 = applyRelative({ *x2, *y2 }, current, relative);
+                    appendQuadratic(current, p1, p2);
+                    control = p1;
+                    current = p2;
+                    lastCurve = 'Q';
+                }
+                break;
+            }
+            case 'T': {
+                while (true) {
+                    auto x = number();
+                    auto y = number();
+                    if (!x || !y) {
+                        break;
+                    }
+                    const Point p1 = lastCurve == 'Q' ? reflect(control, current) : current;
+                    const Point p2 = applyRelative({ *x, *y }, current, relative);
+                    appendQuadratic(current, p1, p2);
+                    control = p1;
+                    current = p2;
+                    lastCurve = 'Q';
                 }
                 break;
             }
             case 'Z':
                 ensurePath().push_back(start);
+                current = start;
+                lastCurve = 0;
                 cmd = 0;
                 break;
             default:
-                // An unimplemented command (A/Q/S/T) would otherwise loop
+                // Only the elliptical arc is left, and it would otherwise loop
                 // forever, since number() refuses to consume a command letter.
+                // What comes back is a fragment rather than a failure, so name
+                // the command that stopped it instead of returning silently.
+                unsupported = cmd;
                 return paths;
             }
             skipCommaWs();
@@ -284,6 +345,32 @@ struct PathParser {
         return value;
     }
 
+    void appendCubic(Point p0, Point p1, Point p2, Point p3) {
+        for (int i = 1; i <= kFlattenSteps; ++i) {
+            const double t = static_cast<double>(i) / kFlattenSteps;
+            const double mt = 1.0 - t;
+            ensurePath().push_back({
+                mt * mt * mt * p0.x + 3 * mt * mt * t * p1.x + 3 * mt * t * t * p2.x + t * t * t * p3.x,
+                mt * mt * mt * p0.y + 3 * mt * mt * t * p1.y + 3 * mt * t * t * p2.y + t * t * t * p3.y
+            });
+        }
+    }
+
+    void appendQuadratic(Point p0, Point p1, Point p2) {
+        for (int i = 1; i <= kFlattenSteps; ++i) {
+            const double t = static_cast<double>(i) / kFlattenSteps;
+            const double mt = 1.0 - t;
+            ensurePath().push_back({
+                mt * mt * p0.x + 2 * mt * t * p1.x + t * t * p2.x,
+                mt * mt * p0.y + 2 * mt * t * p1.y + t * t * p2.y
+            });
+        }
+    }
+
+    static Point reflect(Point control, Point current) {
+        return { 2 * current.x - control.x, 2 * current.y - control.y };
+    }
+
     static Point applyRelative(Point p, Point base, bool relative) {
         if (relative) {
             p.x += base.x;
@@ -299,9 +386,15 @@ struct PathParser {
         return paths.back();
     }
 
+    // A 36x36 cell resolves nothing finer, and every curve in a broadcast
+    // glyph is a short stroke.
+    static constexpr int kFlattenSteps = 18;
+
     std::string_view text;
     size_t pos{};
     std::vector<std::vector<Point>> paths;
+    // The command that stopped the parse, 0 if it ran to the end.
+    char unsupported{0};
 };
 
 bool pointInPath(const std::vector<std::vector<Point>>& paths, double x, double y) {
@@ -323,7 +416,12 @@ bool pointInPath(const std::vector<std::vector<Point>>& paths, double x, double 
 }
 
 std::vector<uint8_t> rasterizeGlyph(const DrcsGlyph& glyph, uint8_t width, uint8_t height) {
-    auto paths = PathParser(glyph.path).parse();
+    PathParser parser(glyph.path);
+    auto paths = parser.parse();
+    if (parser.unsupported) {
+        subtitleDebugLog("DRCS glyph " + formatCodepoint(glyph.codepoint) +
+            " path stopped at unimplemented command '" + std::string(1, parser.unsupported) + "'");
+    }
     if (paths.empty()) {
         return {};
     }

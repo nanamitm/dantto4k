@@ -16,8 +16,10 @@
 #include "ttml/parser.h"
 #include "ttml/resolver.h"
 #include "ttml/b24_converter.h"
+#include "ttml/drcs.h"
 #include <cstdio>
 #include <string>
+#include <vector>
 
 using namespace arib::ttml;
 
@@ -58,6 +60,29 @@ static const char* kHead =
     "</styling><layout>"
     "<region xml:id='r' style='pos'/>"
     "</layout></head>";
+
+// A glyph resource carrying one glyph, drawn with whatever path is given.
+static std::vector<uint8_t> rasterize(const char* path) {
+    const auto glyphs = parse_svg_glyph_resource(
+        std::string("<svg><defs><font><font-face units-per-em='1024' ascent='974' descent='50'/>"
+                    "<glyph unicode='&#xE123;' d='") + path + "'/></font></defs></svg>");
+    DrcsCodeAllocator allocator;
+    if (glyphs.empty() || !allocator.allocate(0xE123)) {
+        return {};
+    }
+    return build_drcs_data_unit(allocator.codes(), glyphs);
+}
+
+// The pattern follows a 1-byte count and a 7-byte glyph header.
+static int patternBits(const std::vector<uint8_t>& unit) {
+    int bits = 0;
+    for (size_t i = 8; i < unit.size(); ++i) {
+        for (int b = 0; b < 8; ++b) {
+            bits += (unit[i] >> b) & 1;
+        }
+    }
+    return bits;
+}
 
 int main() {
     std::printf("1. <br/> directly inside <p>\n");
@@ -146,6 +171,45 @@ int main() {
                   "one span with text/break/text");
             check(!convert(*doc).has_error(), "still converts");
         }
+    }
+
+    // Broadcast DRCS glyphs are drawn with quadratic curves - the one that
+    // exposed this shipped in an NHK BSP4K anime caption and is drawn with
+    // nothing but Q. The parser used to stop at the first one, leaving a single
+    // point, which rasterized to nothing while the statement still designated
+    // the DRCS code.
+    std::printf("6. DRCS paths using curves the parser did not implement\n");
+    {
+        // A rounded square: every segment quadratic, so a parser that stops at
+        // the first Q keeps only the opening moveto.
+        const auto q = rasterize("M100,100 Q500,0 900,100 Q1000,500 900,900"
+                                 " Q500,1000 100,900 Q0,500 100,100 z");
+        check(!q.empty(), "a quadratic-only glyph produces a pattern");
+        check(q.size() == 1 + 7 + (36 * 36 + 7) / 8, "one 36x36 glyph in the data unit");
+        const int bits = patternBits(q);
+        check(bits > 36 * 36 / 2, "the quadratic outline fills the cell");
+
+        // A smooth curve is defined as the explicit one with its leading
+        // control point reflected through the current point, so compare the two
+        // spellings rather than just asking for some pattern - stopping at the
+        // T or S leaves the curve before it, which rasterizes to something.
+        const auto t = rasterize("M100,500 Q300,100 500,500 T900,500"
+                                 " L900,900 L100,900 z");
+        check(!t.empty() && t == rasterize("M100,500 Q300,100 500,500 Q700,900 900,500"
+                                           " L900,900 L100,900 z"),
+              "T matches the quadratic it stands for");
+
+        const auto sm = rasterize("M100,500 C200,100 400,100 500,500 S800,900 900,500"
+                                  " L900,900 L100,900 z");
+        check(!sm.empty() && sm == rasterize("M100,500 C200,100 400,100 500,500"
+                                             " C600,900 800,900 900,500"
+                                             " L900,900 L100,900 z"),
+              "S matches the cubic it stands for");
+
+        // The elliptical arc is still unimplemented. It has to stay a clean
+        // no-pattern rather than a wrong one, and the parser now names it.
+        check(rasterize("M100,100 A400,400 0 1 0 900,900 z").empty(),
+              "an elliptical arc still yields no pattern");
     }
 
     std::printf("\n%s (%d failure(s))\n", failures ? "FAILED" : "ALL PASS", failures);
