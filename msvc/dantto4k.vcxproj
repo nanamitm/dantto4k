@@ -147,6 +147,17 @@
       <AdditionalOptions>/FORCE:MULTIPLE %(AdditionalOptions)</AdditionalOptions>
     </Link>
   </ItemDefinitionGroup>
+  <!-- Applies to every configuration: dantto4k.rc embeds a file that no other
+       part of this solution builds. See src/tsduckNames.h. -->
+  <ItemDefinitionGroup>
+    <PreBuildEvent>
+      <Command>powershell -NoProfile -ExecutionPolicy Bypass -File "$(ProjectDir)generate-tsduck-names.ps1" -OutFile "$(ProjectDir)generated\tsduck.dtv.names"</Command>
+      <Message>Generating tsduck.dtv.names</Message>
+    </PreBuildEvent>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ResourceCompile Include="dantto4k.rc" />
+  </ItemGroup>
   <ItemGroup>
     <ClCompile Include="../src/accessControlDescriptor.cpp" />
     <ClCompile Include="../src/aes.cpp" />
@@ -243,6 +254,7 @@
     <ClCompile Include="../src/serviceListDescriptor.cpp" />
     <ClCompile Include="../src/signalingMessage.cpp" />
     <ClCompile Include="../src/stream.cpp" />
+    <ClCompile Include="../src/tsduckNames.cpp" />
     <ClCompile Include="../src/tlv.cpp" />
     <ClCompile Include="../src/smartCard.cpp" />
     <ClCompile Include="../src/tlvDescriptors.cpp" />

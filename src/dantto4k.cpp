@@ -11,6 +11,7 @@
 #include "smartCard.h"
 #include "bufferedOutput.h"
 #include "progressReporter.h"
+#include "tsduckNames.h"
 #include <array>
 #include <fstream>
 #include <iomanip>
@@ -786,6 +787,10 @@ void printReaderList(const Args& args) {
 }
 
 int main(int argc, char* argv[]) {
+    // Before anything can reach the TSDuck library and go looking for a name
+    // table this binary is carrying.
+    ensureTsduckNamesAvailable();
+
     constexpr size_t chunkSize = 1024 * 1024 * 5; // 5MB
 
     Args args = parseArguments(argc, argv);

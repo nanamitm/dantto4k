@@ -4,6 +4,7 @@
 #include "mmtsRecorder.h"
 #include "demuxerTeeHandler.h"
 #include "smartCard.h"
+#include "tsduckNames.h"
 #include <memory>
 
 BonDriverContext g_bonDriverContext;
@@ -68,6 +69,10 @@ void installRecordingCallbacks()
 }
 
 extern "C" __declspec(dllexport) IBonDriver* CreateBonDriver() {
+    // Not from DllMain: this touches the file system, which the loader lock
+    // makes unsafe there.
+    ensureTsduckNamesAvailable();
+
     std::string path = getConfigFilePath(::hModule);
     try {
         config = loadConfig(path);
