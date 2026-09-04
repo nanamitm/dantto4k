@@ -63,8 +63,12 @@ struct SvgPath {
 [[nodiscard]] bool is_drcs_codepoint(uint32_t codepoint);
 
 // Parses an SVG font resource into the glyphs it defines. Returns an empty map
-// when the payload is not a font this converter understands.
-[[nodiscard]] DrcsGlyphMap parse_svg_glyph_resource(const std::string& input);
+// when the payload is not a font this converter understands. An empty map means
+// two very different things to a caller tracing a stream - the payload was not
+// XML at all, or it was a font holding nothing we could use - so xmlParsed, when
+// given, reports which of the two happened.
+[[nodiscard]] DrcsGlyphMap parse_svg_glyph_resource(const std::string& input,
+                                                    bool* xmlParsed = nullptr);
 
 // True when the TTML document renders at least one private-use codepoint.
 [[nodiscard]] bool contains_drcs_codepoint(const std::string& input);

@@ -546,10 +546,14 @@ std::optional<uint8_t> DrcsCodeAllocator::allocate(uint32_t codepoint) {
     return code;
 }
 
-DrcsGlyphMap parse_svg_glyph_resource(const std::string& input) {
+DrcsGlyphMap parse_svg_glyph_resource(const std::string& input, bool* xmlParsed) {
     DrcsGlyphMap glyphs;
     pugi::xml_document doc;
-    if (doc.load_buffer(input.data(), input.size()).status != pugi::status_ok) {
+    const bool parsed = doc.load_buffer(input.data(), input.size()).status == pugi::status_ok;
+    if (xmlParsed) {
+        *xmlParsed = parsed;
+    }
+    if (!parsed) {
         return glyphs;
     }
 
