@@ -516,8 +516,7 @@ std::vector<uint8_t> rasterizeGlyph(const DrcsGlyph& glyph, uint8_t width, uint8
 void appendCaptionTextStateReset(std::string& output) {
     output.push_back(static_cast<char>(B24ControlSet::ESC));
     output.push_back(static_cast<char>(0x24));
-    // The Kanji set - what the encoder designates for ordinary text.
-    output.push_back(static_cast<char>(0x42));
+    output.push_back(static_cast<char>(0x39));
     output.push_back(static_cast<char>(B24ControlSet::ESC));
     output.push_back(static_cast<char>(0x2A));
     output.push_back(static_cast<char>(0x30));

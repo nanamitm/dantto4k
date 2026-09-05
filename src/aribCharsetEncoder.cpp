@@ -204,10 +204,10 @@ public:
     explicit Encoder(EncodeMode encodeMode)
         : mode(encodeMode) {
         if (mode == EncodeMode::Caption) {
-            state.graphic = { CharsetCode::Kanji, CharsetCode::Alphanumeric, CharsetCode::Hiragana, CharsetCode::Macro };
+            state.graphic = { CharsetCode::JISKanjiPlane1, CharsetCode::Alphanumeric, CharsetCode::Hiragana, CharsetCode::Macro };
         }
         else {
-            state.graphic = { CharsetCode::Kanji, CharsetCode::Alphanumeric, CharsetCode::Hiragana, CharsetCode::Katakana };
+            state.graphic = { CharsetCode::JISKanjiPlane1, CharsetCode::Alphanumeric, CharsetCode::Hiragana, CharsetCode::Katakana };
         }
     }
 
@@ -369,13 +369,8 @@ private:
     }
 
     void selectCharset(const Charset* charset, size_t pos) {
-        // The additional symbols live in rows 85-94 of the Kanji set, so that is
-        // the set they are designated in. Sending them under the JIS compatible
-        // Kanji designation instead would lay them on top of the JIS X 0213
-        // level 3/4 Kanji that occupy those same rows there, leaving no decoder
-        // able to tell a symbol from a Kanji.
         if (mode == EncodeMode::Caption && charset->code == CharsetCode::AdditionalSymbols) {
-            charset = findCharset(CharsetCode::Kanji);
+            charset = findCharset(CharsetCode::JISKanjiPlane1);
             if (charset == nullptr) {
                 return;
             }
@@ -479,17 +474,22 @@ private:
             return;
         }
 
+        CharsetCode newCharsetCode = charsetCode;
+        if (mode == EncodeMode::Caption && charsetCode == CharsetCode::JISKanjiPlane1) {
+            newCharsetCode = CharsetCode::Kanji;
+        }
+
         state.output.push_back(ESC);
         if (charset->is2Byte == false) {
             state.output.push_back(0x28 + graphicIndex);
-            state.output.push_back(static_cast<uint8_t>(charsetCode));
+            state.output.push_back(static_cast<uint8_t>(newCharsetCode));
         }
         else {
             state.output.push_back(0x24);
             if (graphicIndex >= 1 && graphicIndex <= 3) {
                 state.output.push_back(0x29 + graphicIndex);
             }
-            state.output.push_back(static_cast<uint8_t>(charsetCode));
+            state.output.push_back(static_cast<uint8_t>(newCharsetCode));
         }
 
         state.graphic[graphicIndex] = static_cast<CharsetCode>(charsetCode);
