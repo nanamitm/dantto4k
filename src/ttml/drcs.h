@@ -94,10 +94,29 @@ private:
     std::map<uint32_t, uint8_t> codeByCodepoint_;
 };
 
-// Builds the DRCS_1byte data unit payload for the allocated codes. Returns an
-// empty vector when no glyph could be rasterized.
+// A rasterized DRCS pattern: 1 bit per pixel, rows packed continuously.
+struct DrcsPattern {
+    uint8_t width{};
+    uint8_t height{};
+    std::vector<uint8_t> bits;
+
+    [[nodiscard]] bool empty() const { return bits.empty(); }
+};
+
+using DrcsPatternMap = std::map<uint32_t, DrcsPattern>;
+
+// Draws a character with an installed font, for the characters an ARIB caption
+// has no code for. Returns an empty pattern where there is no font rasterizer
+// to call (anything but Windows) or the font has no glyph for it.
+[[nodiscard]] DrcsPattern rasterize_font_glyph(uint32_t codepoint, uint8_t width, uint8_t height);
+
+// Builds the DRCS_1byte data unit payload for the allocated codes. Glyphs come
+// from the subtitle's own resource where it supplied one, and from `patterns`
+// for the codepoints that were drawn from a font instead. Returns an empty
+// vector when nothing could be rasterized.
 [[nodiscard]] std::vector<uint8_t> build_drcs_data_unit(const std::map<uint32_t, uint8_t>& codes,
-                                                        const DrcsGlyphMap& glyphs);
+                                                        const DrcsGlyphMap& glyphs,
+                                                        const DrcsPatternMap& patterns = {});
 
 // Encodes caption text that mixes ordinary characters with DRCS codepoints.
 // Ordinary runs go through arib::text::encode() in Caption mode; DRCS
@@ -105,7 +124,13 @@ private:
 // `text` are preserved so the caller can still split the result per run.
 [[nodiscard]] std::string encode_text_with_drcs(std::string_view text,
                                                 const DrcsGlyphMap& glyphs,
-                                                DrcsCodeAllocator& allocator);
+                                                DrcsCodeAllocator& allocator,
+                                                DrcsPatternMap* fontPatterns = nullptr);
+
+// True when the caption text holds a character a caption has no code for, i.e.
+// one that has to be drawn from a font and sent as a DRCS pattern to be shown
+// at all. Takes the collected caption text, not a TTML document.
+[[nodiscard]] bool contains_unencodable_text(std::string_view text);
 
 } // namespace ttml
 

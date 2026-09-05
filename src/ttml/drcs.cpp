@@ -513,6 +513,28 @@ std::vector<uint8_t> rasterizeGlyph(const DrcsGlyph& glyph, uint8_t width, uint8
 // aribTextEncode() starts from the caption default graphic sets for every call.
 // The actual ARIB stream state is continuous, so reset it before appending an
 // independently encoded chunk.
+// One caption cell. The subtitle resource's own glyphs are rasterized to this
+// too, so a font-drawn pattern sits beside them at the same size.
+constexpr uint8_t kDrcsCellSize = 36;
+
+// A character the caption has no code for is drawn from a font instead, once
+// per statement. Returns false when there is no font to draw it with, in which
+// case it is left to be dropped as before.
+bool needsFontPattern(uint32_t codepoint, DrcsPatternMap* patterns) {
+    if (patterns == nullptr || is_drcs_codepoint(codepoint) ||
+        arib::charset::canEncodeCaption(static_cast<char32_t>(codepoint))) {
+        return false;
+    }
+    auto it = patterns->find(codepoint);
+    if (it == patterns->end()) {
+        it = patterns->emplace(codepoint,
+                               rasterize_font_glyph(codepoint, kDrcsCellSize, kDrcsCellSize)).first;
+        subtitleDebugLog("DRCS from font " + formatCodepoint(codepoint) +
+            (it->second.empty() ? " failed" : " drawn"));
+    }
+    return !it->second.empty();
+}
+
 void appendCaptionTextStateReset(std::string& output) {
     output.push_back(static_cast<char>(B24ControlSet::ESC));
     output.push_back(static_cast<char>(0x24));
@@ -663,19 +685,41 @@ bool has_missing_drcs_glyph(const std::string& input, const DrcsGlyphMap& glyphs
     return missing;
 }
 
-std::vector<uint8_t> build_drcs_data_unit(const std::map<uint32_t, uint8_t>& codes, const DrcsGlyphMap& glyphs) {
+bool contains_unencodable_text(std::string_view text) {
+    bool found = false;
+    forEachUtf8Codepoint(text, [&](uint32_t cp) {
+        if (cp != 0 && !is_drcs_codepoint(cp) &&
+            !arib::charset::canEncodeCaption(static_cast<char32_t>(cp))) {
+            subtitleDebugLog("caption has no code for " + formatCodepoint(cp));
+            found = true;
+        }
+    });
+    return found;
+}
+
+std::vector<uint8_t> build_drcs_data_unit(const std::map<uint32_t, uint8_t>& codes,
+                                          const DrcsGlyphMap& glyphs,
+                                          const DrcsPatternMap& patterns) {
     std::vector<uint8_t> data;
     data.push_back(0);
     uint8_t count = 0;
     for (const auto& [codepoint, code] : codes) {
-        auto it = glyphs.find(codepoint);
-        if (it == glyphs.end()) {
-            continue;
-        }
+        constexpr uint8_t width = kDrcsCellSize;
+        constexpr uint8_t height = kDrcsCellSize;
+        std::vector<uint8_t> pixels;
 
-        constexpr uint8_t width = 36;
-        constexpr uint8_t height = 36;
-        auto pixels = rasterizeGlyph(it->second, width, height);
+        auto it = glyphs.find(codepoint);
+        if (it != glyphs.end()) {
+            pixels = rasterizeGlyph(it->second, width, height);
+        }
+        else {
+            // Drawn from a font, for a character the caption has no code for.
+            auto pattern = patterns.find(codepoint);
+            if (pattern != patterns.end() && pattern->second.width == width &&
+                pattern->second.height == height) {
+                pixels = pattern->second.bits;
+            }
+        }
         if (pixels.empty()) {
             continue;
         }
@@ -694,14 +738,19 @@ std::vector<uint8_t> build_drcs_data_unit(const std::map<uint32_t, uint8_t>& cod
     return count == 0 ? std::vector<uint8_t>{} : data;
 }
 
-std::string encode_text_with_drcs(std::string_view text, const DrcsGlyphMap& glyphs, DrcsCodeAllocator& allocator) {
+std::string encode_text_with_drcs(std::string_view text, const DrcsGlyphMap& glyphs,
+                                  DrcsCodeAllocator& allocator, DrcsPatternMap* fontPatterns) {
     std::string output;
     size_t chunkBegin = 0;
     size_t pos = 0;
     while (pos < text.size()) {
         const size_t cpBegin = pos;
         auto cp = readUtf8Codepoint(text, pos);
-        if (!cp || glyphs.find(*cp) == glyphs.end()) {
+        if (!cp) {
+            continue;
+        }
+        const bool hasGlyph = glyphs.find(*cp) != glyphs.end();
+        if (!hasGlyph && !needsFontPattern(*cp, fontPatterns)) {
             continue;
         }
 

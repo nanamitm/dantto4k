@@ -269,6 +269,7 @@
     <ClCompile Include="../src/ntpTimestamp.cpp" />
     <ClCompile Include="../src/ttml/b24_converter.cpp" />
     <ClCompile Include="../src/ttml/drcs.cpp" />
+    <ClCompile Include="../src/ttml/drcs_font.cpp" />
     <ClCompile Include="../src/ttml/parser.cpp" />
     <ClCompile Include="../src/ttml/resolver.cpp" />
     <ClCompile Include="../src/ttml/style.cpp" />

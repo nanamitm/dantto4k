@@ -77,6 +77,22 @@ const CharLookupTable& charLookupTable() {
     return table;
 }
 
+// A caption designates the JIS compatible Kanji set - that is what the standard
+// caption macro puts in G0 - but ARIB overlays its own additional Kanji and
+// symbols on rows 85-94 of it, and the second plane is not designated at all.
+// A character that JIS X 0213 only has in those rows therefore cannot be sent:
+// the code would arrive as whatever ARIB put in its place. 91区6点 of plane 1 is
+// a Kanji to JIS X 0213 and U+2613 SALTIRE to every caption decoder there is.
+bool isCaptionReachable(const CharLookupResult& result) {
+    if (result.charset->code == CharsetCode::JISKanjiPlane2) {
+        return false;
+    }
+    if (result.charset->code == CharsetCode::JISKanjiPlane1) {
+        return result.row < 84;
+    }
+    return true;
+}
+
 std::optional<CharLookupResult> findChar(char32_t c, CharsetCode candidate1, CharsetCode candidate2, EncodeMode encodeMode) {
     const auto& table = charLookupTable();
     auto it = table.find(c);
@@ -84,9 +100,17 @@ std::optional<CharLookupResult> findChar(char32_t c, CharsetCode candidate1, Cha
         return std::nullopt;
     }
 
-    const auto& results = it->second;
+    std::vector<CharLookupResult> reachable;
+    if (encodeMode == EncodeMode::Caption) {
+        for (const auto& res : it->second) {
+            if (isCaptionReachable(res)) {
+                reachable.push_back(res);
+            }
+        }
+    }
+    const auto& results = encodeMode == EncodeMode::Caption ? reachable : it->second;
     if (results.empty()) {
-        return {};
+        return std::nullopt;
     }
 
     if (encodeMode == EncodeMode::Caption) {
@@ -129,13 +153,24 @@ std::optional<CharLookupResult> findCharsetBy2Char(char32_t c1, char32_t c2, Cha
     if (it1 == table.end()) {
         return {};
     }
-    const auto& results1 = it1->second;
+    std::vector<CharLookupResult> reachable1, reachable2;
+    if (encodeMode == EncodeMode::Caption) {
+        for (const auto& res : it1->second) {
+            if (isCaptionReachable(res)) reachable1.push_back(res);
+        }
+    }
+    const auto& results1 = encodeMode == EncodeMode::Caption ? reachable1 : it1->second;
 
     auto it2 = table.find(c2);
     if (it2 == table.end()) {
         return {};
     }
-    const auto& results2 = it2->second;
+    if (encodeMode == EncodeMode::Caption) {
+        for (const auto& res : it2->second) {
+            if (isCaptionReachable(res)) reachable2.push_back(res);
+        }
+    }
+    const auto& results2 = encodeMode == EncodeMode::Caption ? reachable2 : it2->second;
 
     auto hasCharset = [](const std::vector<CharLookupResult>& list, const Charset* target) {
         for (const auto& res : list) {
@@ -629,6 +664,11 @@ std::string encode(std::string_view input, EncodeMode mode) {
 std::string encode(std::u8string_view input, EncodeMode mode) {
     detail::Encoder encoder(mode);
     return encoder.encode(input);
+}
+
+bool canEncodeCaption(char32_t codepoint) {
+    return detail::findChar(codepoint, CharsetCode::None, CharsetCode::None,
+                            EncodeMode::Caption).has_value();
 }
 
 } // namespace charset

@@ -104,6 +104,9 @@ Config loadConfig(const std::string& filename) {
                  if (key == "debugLogPath") {
                      config.subtitleDebugLogPath = value;
                  }
+                 else if (key == "drcsFallbackFont") {
+                     config.drcsFallbackFont = value;
+                 }
              }
          }
      }

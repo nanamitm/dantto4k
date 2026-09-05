@@ -469,13 +469,20 @@ private:
         collect_text(page, text);
 
         drcs_codes_.clear();
-        if (!drcs_glyphs_.empty()) {
+        drcs_font_patterns_.clear();
+        // A character the caption has no code for is drawn from a font and sent
+        // as a DRCS pattern, so the same path is taken for a page that holds one
+        // even when the subtitle shipped no glyph resource of its own.
+        const bool needsDrcs =
+            !drcs_glyphs_.empty() || contains_unencodable_text(text);
+        if (needsDrcs) {
             // Runs are encoded in one call so the charset state carries across
             // them, then split back apart on the NUL separators. A DRCS glyph
             // cannot go through the text encoder, so a page that uses one falls
             // back to chunk-wise encoding, which re-establishes the graphic
             // sets around every DRCS designation.
-            return split_by_null(encode_text_with_drcs(text, drcs_glyphs_, drcs_codes_));
+            return split_by_null(
+                encode_text_with_drcs(text, drcs_glyphs_, drcs_codes_, &drcs_font_patterns_));
         }
 
         return split_by_null(arib::text::encode(text, arib::charset::EncodeMode::Caption));
@@ -485,7 +492,7 @@ private:
         if (drcs_codes_.empty()) {
             return {};
         }
-        return build_drcs_data_unit(drcs_codes_.codes(), drcs_glyphs_);
+        return build_drcs_data_unit(drcs_codes_.codes(), drcs_glyphs_, drcs_font_patterns_);
     }
 
     void encode_page(const Page& page, const std::vector<std::string>& encoded_runs, size_t& encoded_run_index) {
@@ -817,6 +824,7 @@ private:
     double layoutScale_;
     const DrcsGlyphMap& drcs_glyphs_;
     DrcsCodeAllocator drcs_codes_;
+    DrcsPatternMap drcs_font_patterns_;
     std::vector<std::uint8_t> output_;
     uint8_t last_text_color_palette_{0};
     uint8_t last_text_color_index_{7};
