@@ -102,6 +102,7 @@
 ..\src\transmissionControlSignal.cpp
 ..\src\ttml\b24_converter.cpp
 ..\src\ttml\drcs.cpp
+..\src\ttml\drcs_font.cpp
 ..\src\ttml\parser.cpp
 ..\src\ttml\resolver.cpp
 ..\src\ttml\style.cpp

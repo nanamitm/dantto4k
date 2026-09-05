@@ -72,13 +72,14 @@ struct Check {
 };
 
 enum CheckId {
-    kAribPuaDrcs, kPStyleRef, kNestedSpan, kOversizedLength, kDrcsUnrasterizable,
+    kAribPuaDrcs, kNoAribCode, kPStyleRef, kNestedSpan, kOversizedLength, kDrcsUnrasterizable,
     kTtmlRejected, kEedMultiItem, kSubtitleTmd, kMultiCueDoc, kClearOnlyDoc,
     kPLevelContent, kInlineTts, kStyleGeometry, kCheckCount
 };
 
 Check checks[kCheckCount] = {
     {"arib-pua-drcs", true, "caption text uses a private-use codepoint the ARIB charset tables cover; is_drcs_codepoint() calls it DRCS anyway, so the caption waits for a glyph the broadcast has no reason to send", 0, {}},
+    {"no-arib-code", false, "caption text uses a character no ARIB graphic set has a code for; it used to go out as a code meaning something else, and is now drawn from a font and sent as a DRCS pattern instead", 0, {}},
     {"p-style-ref", true, "<p style=\"...\"> - a paragraph style reference, which the parser still never reads", 0, {}},
     {"nested-span", true, "<span> inside a <span> - a hard parse error that discards the whole document", 0, {}},
     {"oversized-length", true, "a style length large enough to overflow the double-to-uint32_t casts in the B24 encoder", 0, {}},
@@ -276,8 +277,17 @@ void scanTtmlText(const std::string& xml) {
     }
 
     for (const uint32_t cp : codepoints) {
-        if (arib::ttml::is_drcs_codepoint(cp) && encodableAsArib(cp)) {
-            checks[kAribPuaDrcs].hit(formatCp(cp));
+        if (arib::ttml::is_drcs_codepoint(cp)) {
+            if (encodableAsArib(cp)) {
+                checks[kAribPuaDrcs].hit(formatCp(cp));
+            }
+            continue;
+        }
+        // Worth counting even though it is handled now: it says how much of a
+        // capture leans on the font fallback, which is the only part of the
+        // caption that is a picture rather than text.
+        if (!arib::charset::canEncodeCaption(static_cast<char32_t>(cp))) {
+            checks[kNoAribCode].hit(formatCp(cp) + " " + toUtf8(cp));
         }
     }
 }
@@ -330,6 +340,22 @@ int runSelfTest() {
                    "<style xml:id='p' tts:origin='1px 2px' tts:extent='3px 4px'/>"
                    "</styling></head><body/></tt>");
         report(checks[kStyleGeometry].hits > before, "style-geometry");
+    }
+
+    // U+840A is a JIS X 0213 level 3 Kanji at 91区6点 of plane 1, which is where
+    // ARIB puts an additional symbol instead, so no caption code stands for it.
+    // U+83B1, the same Kanji simplified, is an ordinary one at 45区73点.
+    {
+        const auto before = checks[kNoAribCode].hits;
+        scanTtmlText(std::string(kHead) + "<body><div><p region='r'><span style='s'>" +
+                     toUtf8(0x840A) + "</span></p></div></body></tt>");
+        report(checks[kNoAribCode].hits > before, "no-arib-code fires for a JIS X 0213 level 3 Kanji");
+    }
+    {
+        const auto before = checks[kNoAribCode].hits;
+        scanTtmlText(std::string(kHead) + "<body><div><p region='r'><span style='s'>" +
+                     toUtf8(0x83B1) + "</span></p></div></body></tt>");
+        report(checks[kNoAribCode].hits == before, "no-arib-code stays quiet for a Kanji the tables carry");
     }
 
     // U+E0D8 sits in the ARIB additional-symbol table, so the encoder can emit
