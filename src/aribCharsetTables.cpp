@@ -54,6 +54,17 @@ const Charset additionalSymbolsTable = {
 	CharsetCode::AdditionalSymbols, 0, true, false, false, 89, 5, nullptr, &additionalSymbolsRow[0]
 };
 
+// The ARIB Kanji set is rows 1-84 of JIS X 0213 plane 1 - the two agree there -
+// with the additional Kanji and symbols in rows 85-94, which additionalSymbolsRow
+// holds instead. Keeping it as a charset of its own is what lets a character go
+// out designated in the set it belongs to: rows 1-84 and the additional symbols
+// as the Kanji set, which every decoder reads the same way, and only the JIS
+// X 0213 rows past 84 as the JIS compatible Kanji set, where those same rows
+// mean something else entirely.
+const Charset kanjiTable = {
+	CharsetCode::Kanji, 0, true, false, false, 0, 84, nullptr, &jisKanjiPlane1Row[0]
+};
+
 constexpr CharAlias additionalSymbolAlias(char32_t codepoint, uint8_t row, uint8_t col) {
 	return {
 		codepoint,
@@ -1999,6 +2010,7 @@ const Charset* const lookupPriority[] = {
     &katakanaTable,
     &jisX0201KatakanaTable,
 	&additionalSymbolsTable,
+    &kanjiTable,
     &jisKanjiPlane1Table,
     &jisKanjiPlane2Table
 };
@@ -2024,6 +2036,8 @@ const Charset* findCharset(CharsetCode code) {
         return &katakanaTable;
     case CharsetCode::JISX0201Katakana:
         return &jisX0201KatakanaTable;
+    case CharsetCode::Kanji:
+        return &kanjiTable;
     case CharsetCode::JISKanjiPlane1:
         return &jisKanjiPlane1Table;
     case CharsetCode::JISKanjiPlane2:
