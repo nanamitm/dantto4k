@@ -413,7 +413,12 @@ void MmtTlvDemuxer::processMmtTable(Common::ReadStream& stream) {
         return;
     }
 
-    table->unpack(stream);
+    if (!table->unpack(stream)) {
+        // A partially parsed table must never change stream registration or
+        // reach handlers. Its unread tail has no reliable next-table boundary.
+        stream.skip(stream.leftBytes());
+        return;
+    }
 
     switch (tableId) {
     case MmtTableId::Mpt:
