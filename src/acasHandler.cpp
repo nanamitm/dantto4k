@@ -27,6 +27,10 @@ bool AcasHandler::onEcm(const std::vector<uint8_t>& ecm) {
         if (lastEcm == ecm && ecmReady) {
             return true;
         }
+        if (failedEcm == ecm &&
+            std::chrono::steady_clock::now() - failedEcmTime < kEcmRetryInterval) {
+            return true;
+        }
         lastEcm = ecm;
         queue.push({ generation, ecm });
         // Keep the published key: the parity in use stays valid while the
@@ -83,6 +87,7 @@ void AcasHandler::clear() {
         ecmReady = false;
         keyValid = false;
         key = {};
+        failedEcm.clear();
         lastKeyType = MmtTlv::EncryptionFlag::UNSCRAMBLED;
         lastEcm.clear();
     }
@@ -141,10 +146,14 @@ void AcasHandler::worker() {
                 keyValid = ecmOk;
                 if (ecmOk) {
                     this->key = key;
+                    failedEcm.clear();
                 } else {
-                    // Allow an identical ECM to retry after a card failure.
+                    // Allow an identical ECM to retry after a card failure,
+                    // but no sooner than kEcmRetryInterval.
                     ecmReady = false;
                     lastEcm.clear();
+                    failedEcm = std::move(current.second);
+                    failedEcmTime = std::chrono::steady_clock::now();
                 }
             }
             workerBusy = false;

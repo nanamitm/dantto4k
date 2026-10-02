@@ -15,6 +15,7 @@ public:
     bool fail = false;
     bool block = false;
     bool entered = false;
+    int transmits = 0;
     std::mutex mutex;
     std::condition_variable cv;
     bool init() override { return true; }
@@ -29,6 +30,7 @@ public:
     uint32_t transmit(const std::vector<uint8_t>& message, ApduResponse& response) override {
         std::unique_lock<std::mutex> lock(mutex);
         entered = true;
+        ++transmits;
         cv.notify_all();
         cv.wait(lock, [&] { return !block; });
         if (fail) return SCARD_F_INTERNAL_ERROR;
@@ -110,8 +112,39 @@ int main() {
             std::lock_guard<std::mutex> lock(fake->mutex);
             fake->fail = false;
         }
+        const auto transmitCount = [&] {
+            std::lock_guard<std::mutex> lock(fake->mutex);
+            return fake->transmits;
+        };
+        // Repetitions of the failed ECM within the retry interval stay off the card.
+        const auto beforeRepeat = transmitCount();
+        for (int i = 0; i < 20; ++i) {
+            handler.onEcm(ecm);
+            require(!handler.decrypt(bad), "throttled ECM must not publish keys");
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        require(transmitCount() == beforeRepeat, "failed ECM must not be retried before the interval");
+        // A different ECM is not throttled.
+        auto otherEcm = ecm;
+        otherEcm[1]++;
+        handler.onEcm(otherEcm);
+        require(handler.decrypt(bad) && transmitCount() > beforeRepeat,
+                "a new ECM must be sent to the card immediately");
+        // After the interval the identical failed ECM is retried.
+        {
+            std::lock_guard<std::mutex> lock(fake->mutex);
+            fake->fail = true;
+        }
+        ecm[0]++;
         handler.onEcm(ecm);
-        require(handler.decrypt(bad), "identical ECM must retry after failure");
+        require(!handler.decrypt(badOdd), "failed ECM must not publish keys");
+        {
+            std::lock_guard<std::mutex> lock(fake->mutex);
+            fake->fail = false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+        handler.onEcm(ecm);
+        require(handler.decrypt(bad), "identical ECM must retry after the interval");
 
         {
             std::lock_guard<std::mutex> lock(fake->mutex);
@@ -182,7 +215,7 @@ int main() {
         }
         handler.onEcm(ecm);
         require(handler.decrypt(afterClear), "rapid enqueue/cancel must leave worker usable");
-        std::puts("PASS: ECM success, failure, identical retry, non-blocking update, cancellation and generation recovery");
+        std::puts("PASS: ECM success, failure, throttled identical retry, non-blocking update, cancellation and generation recovery");
         return 0;
     } catch (const std::exception& e) {
         std::fprintf(stderr, "FAIL: %s\n", e.what());
