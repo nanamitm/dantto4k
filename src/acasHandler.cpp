@@ -29,7 +29,8 @@ bool AcasHandler::onEcm(const std::vector<uint8_t>& ecm) {
         }
         lastEcm = ecm;
         queue.push({ generation, ecm });
-        keyValid = false;
+        // Keep the published key: the parity in use stays valid while the
+        // next ECM is processed, so decryption must not stall on card I/O.
         ecmReady = true;
     }
     queueCv.notify_one();
@@ -82,6 +83,7 @@ void AcasHandler::clear() {
         ecmReady = false;
         keyValid = false;
         key = {};
+        lastKeyType = MmtTlv::EncryptionFlag::UNSCRAMBLED;
         lastEcm.clear();
     }
     // An in-flight card transaction may finish later. Its old generation is
@@ -99,12 +101,16 @@ std::optional<std::array<uint8_t, 16>> AcasHandler::getDecryptionKey(MmtTlv::Enc
                       keyType != MmtTlv::EncryptionFlag::ODD)) {
         return std::nullopt;
     }
-    const auto requestedGeneration = generation;
-    if (!queueCv.wait_for(lock, std::chrono::seconds(10), [&]() {
-            return generation != requestedGeneration || (!workerBusy && queue.empty());
-        }) || generation != requestedGeneration || !keyValid) {
-        return std::nullopt;
+    // Only a missing key or a parity switch needs the newest ECM result.
+    if (!keyValid || keyType != lastKeyType) {
+        const auto requestedGeneration = generation;
+        if (!queueCv.wait_for(lock, std::chrono::seconds(10), [&]() {
+                return generation != requestedGeneration || (!workerBusy && queue.empty());
+            }) || generation != requestedGeneration || !keyValid) {
+            return std::nullopt;
+        }
     }
+    lastKeyType = keyType;
     return keyType == MmtTlv::EncryptionFlag::EVEN ? key.even : key.odd;
 }
 

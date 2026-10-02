@@ -56,10 +56,23 @@ protected:
     void endTransaction() override {}
 };
 
-static MmtTlv::Mmtp packet() {
+// Releases a blocked fake card on scope exit, so a failing check cannot leave
+// the worker stuck in transmit() and hang the handler destructor.
+struct Unblock {
+    FakeCard& card;
+    ~Unblock() {
+        {
+            std::lock_guard<std::mutex> lock(card.mutex);
+            card.block = false;
+        }
+        card.cv.notify_all();
+    }
+};
+
+static MmtTlv::Mmtp packet(MmtTlv::EncryptionFlag flag = MmtTlv::EncryptionFlag::EVEN) {
     MmtTlv::Mmtp result;
     MmtTlv::ExtensionHeaderScrambling scrambling;
-    scrambling.encryptionFlag = MmtTlv::EncryptionFlag::EVEN;
+    scrambling.encryptionFlag = flag;
     result.extensionHeaderScrambling = scrambling;
     result.packetId = 0x100;
     result.packetSequenceNumber = 1;
@@ -83,6 +96,12 @@ int main() {
         }
         ecm[0]++;
         handler.onEcm(ecm);
+        // A parity switch waits for the failed ECM; afterwards neither parity
+        // may fall back to the previous key.
+        auto badOdd = packet(MmtTlv::EncryptionFlag::ODD);
+        const auto originalOdd = badOdd.payload;
+        require(!handler.decrypt(badOdd) && badOdd.payload == originalOdd,
+                "failed ECM must not decrypt the switched parity");
         auto bad = packet();
         const auto original = bad.payload;
         require(!handler.decrypt(bad) && bad.payload == original,
@@ -94,6 +113,41 @@ int main() {
         handler.onEcm(ecm);
         require(handler.decrypt(bad), "identical ECM must retry after failure");
 
+        {
+            std::lock_guard<std::mutex> lock(fake->mutex);
+            fake->block = true;
+            fake->entered = false;
+        }
+        ecm[0]++;
+        handler.onEcm(ecm);
+        {
+            std::unique_lock<std::mutex> lock(fake->mutex);
+            require(fake->cv.wait_for(lock, std::chrono::seconds(2), [&] { return fake->entered; }),
+                    "worker did not enter card transaction");
+        }
+        {
+            Unblock unblock{ *fake };
+            // The parity in use keeps decrypting while the next ECM is on the card.
+            auto current = packet();
+            const auto start = std::chrono::steady_clock::now();
+            require(handler.decrypt(current), "current parity must keep its key during ECM update");
+            require(std::chrono::steady_clock::now() - start < std::chrono::seconds(1),
+                    "current parity must not wait for card I/O");
+            // Switching parity needs the new ECM, so it waits for the card.
+            auto switched = std::async(std::launch::async, [&] {
+                auto next = packet(MmtTlv::EncryptionFlag::ODD);
+                return handler.decrypt(next);
+            });
+            require(switched.wait_for(std::chrono::milliseconds(300)) == std::future_status::timeout,
+                    "parity switch must wait for the pending ECM");
+            {
+                std::lock_guard<std::mutex> lock(fake->mutex);
+                fake->block = false;
+            }
+            fake->cv.notify_all();
+            require(switched.wait_for(std::chrono::seconds(2)) == std::future_status::ready && switched.get(),
+                    "parity switch must use the new ECM once the card answers");
+        }
         {
             std::lock_guard<std::mutex> lock(fake->mutex);
             fake->block = true;
@@ -128,7 +182,7 @@ int main() {
         }
         handler.onEcm(ecm);
         require(handler.decrypt(afterClear), "rapid enqueue/cancel must leave worker usable");
-        std::puts("PASS: ECM success, failure, identical retry, cancellation and generation recovery");
+        std::puts("PASS: ECM success, failure, identical retry, non-blocking update, cancellation and generation recovery");
         return 0;
     } catch (const std::exception& e) {
         std::fprintf(stderr, "FAIL: %s\n", e.what());

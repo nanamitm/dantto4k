@@ -31,6 +31,7 @@ private:
     bool ecmReady = false;
     bool keyValid = false;
     bool workerBusy = false;
+    MmtTlv::EncryptionFlag lastKeyType{ MmtTlv::EncryptionFlag::UNSCRAMBLED };
     std::unique_ptr<AcasCard> acasCard;
     AcasCard::DecryptionKey key{};
     bool running{true};
