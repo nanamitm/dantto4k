@@ -2,6 +2,7 @@
 #include <span>
 #include <future>
 #include <queue>
+#include <chrono>
 #include "extensionHeaderScrambling.h"
 #include "acasCard.h"
 #include "smartCard.h"
@@ -22,9 +23,14 @@ private:
     std::optional<std::array<uint8_t, 16>> getDecryptionKey(MmtTlv::EncryptionFlag keyType);
 
     using Task = std::pair<uint64_t, std::vector<uint8_t>>;
+    // ECMs repeat many times per second; a card that rejects one (e.g. an
+    // uncontracted service) must not be asked again for every repetition.
+    static constexpr std::chrono::milliseconds kEcmRetryInterval{ 1000 };
     std::queue<Task> queue;
     std::condition_variable queueCv;
     std::vector<uint8_t> lastEcm;
+    std::vector<uint8_t> failedEcm;
+    std::chrono::steady_clock::time_point failedEcmTime;
     std::mutex queueMutex;
     // Queue, generation, and key validity share one lock so cancellation
     // cannot race a worker publishing a key from the previous channel.
