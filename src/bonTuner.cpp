@@ -68,8 +68,8 @@ const uint32_t CBonTuner::GetReadyCount(void) {
 
 const bool CBonTuner::GetTsStream(uint8_t* pDst, uint32_t* pdwSize, uint32_t* pdwRemain) {
 	uint8_t* pSrc = nullptr;
-	bool ret = GetTsStream(&pSrc, pdwSize, pdwRemain);;
-	if (*pdwSize) {
+	bool ret = GetTsStream(&pSrc, pdwSize, pdwRemain);
+	if (ret && *pdwSize) {
 		memcpy(pDst, pSrc, *pdwSize);
 	}
 
@@ -78,19 +78,28 @@ const bool CBonTuner::GetTsStream(uint8_t* pDst, uint32_t* pdwSize, uint32_t* pd
 
 const bool CBonTuner::GetTsStream(uint8_t** ppDst, uint32_t* pdwSize, uint32_t* pdwRemain) {
 	std::lock_guard<std::mutex> lock(mutex);
+	*ppDst = nullptr;
+	*pdwSize = 0;
+	*pdwRemain = 0;
 	if (!pBonDriver2) return false;
 
 	bool ret;
 	do {
-		ret = pBonDriver2->GetTsStream(ppDst, pdwSize, pdwRemain);
+		uint8_t* source = nullptr;
+		uint32_t sourceSize = 0;
+		uint32_t sourceRemain = 0;
+		ret = pBonDriver2->GetTsStream(&source, &sourceSize, &sourceRemain);
 		if (ret) {
 			if (g_bonDriverContext.mmtsDumpFs && !config.decodeDump) {
-                g_bonDriverContext.mmtsDumpFs->write((char*)*ppDst, *pdwSize);
+                g_bonDriverContext.mmtsDumpFs->write((char*)source, sourceSize);
 			}
 		
-			inputBuffer.insert(inputBuffer.end(), *ppDst, *ppDst + *pdwSize);
+			if (sourceSize != 0) {
+				inputBuffer.insert(inputBuffer.end(), source, source + sourceSize);
+			}
 		}
-	} while(ret && *pdwRemain != 0);
+		if (!ret || sourceRemain == 0) break;
+	} while (true);
 	
 	MmtTlv::Common::ReadStream input(inputBuffer);
 	while (!input.isEof()) {
@@ -111,7 +120,6 @@ const bool CBonTuner::GetTsStream(uint8_t** ppDst, uint32_t* pdwSize, uint32_t* 
 	// that wait, corrupting MMT/TLV data (manifesting as HEVC decode errors downstream)
 	// even though TS continuity counters stayed intact (we regenerate them on remux).
 	if (g_bonDriverContext.remuxOutput.empty()) {
-		*pdwRemain = static_cast<uint32_t>(inputBuffer.size());
 		return false;
 	}
 
@@ -127,8 +135,10 @@ void CBonTuner::PurgeTsStream(void) {
 	std::lock_guard<std::mutex> lock(mutex);
 
 	inputBuffer.clear();
+	outputBuffer.clear();
 	g_bonDriverContext.remuxOutput.clear();
 	g_bonDriverContext.demuxer.clear();
+	g_bonDriverContext.handler.clear();
 
 	if (!pBonDriver2) return;
 	return pBonDriver2->PurgeTsStream();
@@ -158,8 +168,10 @@ const bool CBonTuner::SetChannel(const uint32_t dwSpace, const uint32_t dwChanne
 	std::lock_guard<std::mutex> lock(mutex);
 
 	inputBuffer.clear();
+	outputBuffer.clear();
 	g_bonDriverContext.remuxOutput.clear();
 	g_bonDriverContext.demuxer.clear();
+	g_bonDriverContext.handler.clear();
 
 	if (config.mmtsDumpPath != "") {
 		if (g_bonDriverContext.mmtsDumpFs) {
