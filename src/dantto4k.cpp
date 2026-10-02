@@ -12,6 +12,7 @@
 #include "bufferedOutput.h"
 #include "progressReporter.h"
 #include "tsduckNames.h"
+#include "filePathSafety.h"
 #include <array>
 #include <fstream>
 #include <iomanip>
@@ -832,6 +833,26 @@ int main(int argc, char* argv[]) {
     if (args.listSmartCardReader) {
         printReaderList(args);
         return 0;
+    }
+
+    // Validate all destinations before opening either output with truncation.
+    try {
+        if (!args.output.empty() && !useStdout && !useStdin &&
+            sameFilePath(args.input, args.output)) {
+            std::cerr << "Input and output paths refer to the same file" << std::endl;
+            return 1;
+        }
+        if (args.writeMmtsMap &&
+            ((!useStdin && sameFilePath(args.input, args.mmtsMapPath)) ||
+             (!args.writeMmtsMapOnly && !useStdout &&
+              sameFilePath(args.output, args.mmtsMapPath)))) {
+            std::cerr << "MMTS map path must be different from input and output files" << std::endl;
+            return 1;
+        }
+    }
+    catch (const std::filesystem::filesystem_error& e) {
+        std::cerr << "Unable to validate file paths: " << e.what() << std::endl;
+        return 1;
     }
 
 #ifdef WIN32
