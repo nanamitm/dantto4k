@@ -1,0 +1,33 @@
+# Windows regression tests
+
+Run from PowerShell 7 with Visual Studio C++ x64 tools and initialized
+submodules installed:
+
+```powershell
+.\tools\test-regressions.ps1
+```
+
+The script builds the Release x64 solution, compiles each test against the
+production objects, and fails on the first unsuccessful build or test. Compiler
+response files and executables use `work/regression-tests`.
+No tuner, smart card, CasProxy service, or broadcast recording is required.
+
+After an existing Release build, individual suites can be selected:
+
+```powershell
+.\tools\test-regressions.ps1 -SkipBuild -Tests acas,casproxy
+```
+
+| Suite | Regression covered |
+| --- | --- |
+| `paths` | Relative aliases, case differences, hard links and map/media collisions are rejected without modifying input or existing output; separate outputs still work. |
+| `acas` | Successful ECM publishes keys; failed ECM preserves ciphertext; identical ECM retries; cancellation discards old generations and never waits for blocked card I/O. |
+| `casproxy` | Refused/fast connections, eight concurrent callers, duplicate replies, EOF, explicit close, and a bounded request timeout all recover without replacing the client. |
+| `demux` | A partially parsed MPT cannot remove existing streams; truncated ECM never reaches handlers; the next complete MPT remains usable. |
+| `bontuner` | Failed pointer calls return empty outputs; failed copy calls preserve the destination; successful calls return TS; purge and selection reset buffered input and PCR suppression. |
+| `ttml` | Existing parser, style inheritance, line break and DRCS regression tests. |
+
+The CasProxy suite deliberately waits for a request timeout and repeated refused
+TCP connections, so it can take a few minutes on Windows. The loopback server
+listens only on `127.0.0.1`. The path suite removes only its unique temporary
+directory after checking that the cleanup target remains under the temp root.

@@ -7,3 +7,4 @@ dantto4k_dev.sln
 *.obj
 *.exe
 msvc/generated/
+work/regression-tests/
