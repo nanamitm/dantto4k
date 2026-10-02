@@ -36,6 +36,10 @@ jobs:
       - name: Build
         run: msbuild msvc\dantto4k.sln /m /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143
 
+      - name: Regression tests
+        shell: pwsh
+        run: .\tools\test-regressions.ps1 -SkipBuild
+
       - name: Package
         shell: pwsh
         run: |

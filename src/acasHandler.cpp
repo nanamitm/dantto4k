@@ -5,8 +5,8 @@
 
 AcasHandler::AcasHandler() {
     acasCard = std::make_unique<AcasCard>();
-    workerThread = std::thread(&AcasHandler::worker, this);
     hasAESNI = AESCtrCipher::hasAESNI();
+    workerThread = std::thread(&AcasHandler::worker, this);
 }
 
 AcasHandler::~AcasHandler() {
@@ -22,23 +22,26 @@ AcasHandler::~AcasHandler() {
 }
 
 bool AcasHandler::onEcm(const std::vector<uint8_t>& ecm) {
-    if (lastEcm == ecm) {
-        return true;
-    }
-    lastEcm = ecm;
-
     {
         std::lock_guard<std::mutex> lock(queueMutex);
-        queue.push({ generation.load(std::memory_order_relaxed), ecm });
-        processing = true;
+        if (lastEcm == ecm && ecmReady) {
+            return true;
+        }
+        lastEcm = ecm;
+        queue.push({ generation, ecm });
+        // Keep the published key: the parity in use stays valid while the
+        // next ECM is processed, so decryption must not stall on card I/O.
+        ecmReady = true;
     }
     queueCv.notify_one();
-    ecmReady = true;
 
     return true;
 }
 
 bool AcasHandler::decrypt(MmtTlv::Mmtp& mmtp) {
+    if (!mmtp.extensionHeaderScrambling) {
+        return false;
+    }
     auto key = getDecryptionKey(mmtp.extensionHeaderScrambling->encryptionFlag);
     if (!key) {
         return false;
@@ -72,20 +75,20 @@ bool AcasHandler::decrypt(MmtTlv::Mmtp& mmtp) {
 }
 
 void AcasHandler::clear() {
-    ecmReady = false;
-    lastPayloadKeyType = MmtTlv::EncryptionFlag::UNSCRAMBLED;
-
     std::queue<Task> empty;
     {
-        std::unique_lock<std::mutex> lock(queueMutex);
+        std::lock_guard<std::mutex> lock(queueMutex);
+        ++generation;
         queue.swap(empty);
-        queueCv.notify_one();
-        queueCv.wait(lock, [&]() {
-            return !processing;
-        });
+        ecmReady = false;
+        keyValid = false;
+        key = {};
+        lastKeyType = MmtTlv::EncryptionFlag::UNSCRAMBLED;
+        lastEcm.clear();
     }
-    lastEcm.clear();
-    generation.fetch_add(1, std::memory_order_relaxed);
+    // An in-flight card transaction may finish later. Its old generation is
+    // ignored by worker(); selecting a channel never waits for card I/O.
+    queueCv.notify_all();
 }
 
 void AcasHandler::setSmartCard(std::unique_ptr<ISmartCard> sc) {
@@ -93,32 +96,22 @@ void AcasHandler::setSmartCard(std::unique_ptr<ISmartCard> sc) {
 }
 
 std::optional<std::array<uint8_t, 16>> AcasHandler::getDecryptionKey(MmtTlv::EncryptionFlag keyType) {
-    if (!ecmReady) {
+    std::unique_lock<std::mutex> lock(queueMutex);
+    if (!ecmReady || (keyType != MmtTlv::EncryptionFlag::EVEN &&
+                      keyType != MmtTlv::EncryptionFlag::ODD)) {
         return std::nullopt;
     }
-
-    if (lastPayloadKeyType != keyType) {
-        std::unique_lock<std::mutex> lock(queueMutex);
-        bool ready = queueCv.wait_for(lock, std::chrono::seconds(10), [&]() {
-            return !processing;
-        });
-        if (!ready) {
-            // timeout
+    // Only a missing key or a parity switch needs the newest ECM result.
+    if (!keyValid || keyType != lastKeyType) {
+        const auto requestedGeneration = generation;
+        if (!queueCv.wait_for(lock, std::chrono::seconds(10), [&]() {
+                return generation != requestedGeneration || (!workerBusy && queue.empty());
+            }) || generation != requestedGeneration || !keyValid) {
             return std::nullopt;
         }
     }
-
-    lastPayloadKeyType = keyType;
-
-    {
-        std::lock_guard<std::mutex> lock(keyMutex);
-        if (keyType == MmtTlv::EncryptionFlag::EVEN) {
-            return key.even;
-        }
-        else {
-            return key.odd;
-        }
-    }
+    lastKeyType = keyType;
+    return keyType == MmtTlv::EncryptionFlag::EVEN ? key.even : key.odd;
 }
 
 void AcasHandler::worker() {
@@ -136,21 +129,26 @@ void AcasHandler::worker() {
 
             current = std::move(queue.front());
             queue.pop();
+            workerBusy = true;
         }
 
         AcasCard::DecryptionKey key = {};
         const bool ecmOk = acasCard->ecm(current.second, key);
 
-        if (ecmOk && generation.load(std::memory_order_relaxed) == current.first) {
-            std::lock_guard<std::mutex> lock(keyMutex);
-            this->key = key;
-        }
         {
             std::lock_guard<std::mutex> lock(queueMutex);
-            if (queue.empty()) {
-                processing = false;
-                queueCv.notify_all();
+            if (generation == current.first && queue.empty()) {
+                keyValid = ecmOk;
+                if (ecmOk) {
+                    this->key = key;
+                } else {
+                    // Allow an identical ECM to retry after a card failure.
+                    ecmReady = false;
+                    lastEcm.clear();
+                }
             }
+            workerBusy = false;
         }
+        queueCv.notify_all();
     }
 }

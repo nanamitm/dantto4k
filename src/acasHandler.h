@@ -22,22 +22,24 @@ private:
     std::optional<std::array<uint8_t, 16>> getDecryptionKey(MmtTlv::EncryptionFlag keyType);
 
     using Task = std::pair<uint64_t, std::vector<uint8_t>>;
-    MmtTlv::EncryptionFlag lastPayloadKeyType{ MmtTlv::EncryptionFlag::UNSCRAMBLED };
     std::queue<Task> queue;
     std::condition_variable queueCv;
     std::vector<uint8_t> lastEcm;
     std::mutex queueMutex;
-    std::mutex keyMutex;
-    std::atomic<bool> ecmReady{false};
+    // Queue, generation, and key validity share one lock so cancellation
+    // cannot race a worker publishing a key from the previous channel.
+    bool ecmReady = false;
+    bool keyValid = false;
+    bool workerBusy = false;
+    MmtTlv::EncryptionFlag lastKeyType{ MmtTlv::EncryptionFlag::UNSCRAMBLED };
     std::unique_ptr<AcasCard> acasCard;
-    AcasCard::DecryptionKey key;
+    AcasCard::DecryptionKey key{};
     bool running{true};
     std::thread workerThread;
     AESCtrCipher aes;
-    std::array<uint8_t, 16> lastKey{};
+    std::optional<std::array<uint8_t, 16>> lastKey;
     bool hasAESNI = false;
-    std::atomic<uint64_t> generation{0};
-    std::atomic<bool> processing{false};
+    uint64_t generation = 0;
 
 
 };

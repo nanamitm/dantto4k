@@ -32,32 +32,31 @@ private:
 
     void doWrite();
     void doRead();
-    void readPacketData();
-    void handleResponse();
+    void readPacketData(uint32_t length);
+    void handleResponse(const std::vector<uint8_t>& data);
+    void ensureConnected(std::function<void(bool)> completion);
+    void disconnect();
     void onOpen();
     void onFail();
-    void onClose();
     std::shared_ptr<casproxy::ResponseBase> sendRequest(casproxy::RequestBase& res);
 
-    uint32_t packetLength;
-    std::vector<uint8_t> packetData;
-    std::string serverUrl;
     asio::io_context io_context;
+    // Public requests are serialized; all connection/queue/promise state below
+    // is owned exclusively by the io_context thread.
     std::mutex mutex;
-    std::mutex responsePromiseMutex;
-    std::mutex connectionMutex;
     std::thread thread;
-    std::map<uint32_t, std::promise<std::shared_ptr<casproxy::ResponseBase>>> mapResponsePromise;
-    std::optional<std::promise<bool>> connectionPromise;
-    std::atomic<bool> connected{false};
+    std::map<uint32_t, std::shared_ptr<std::promise<std::shared_ptr<casproxy::ResponseBase>>>> mapResponsePromise;
+    std::vector<std::function<void(bool)>> connectionWaiters;
+    bool connected = false;
     bool connecting{false};
-    std::atomic<uint32_t> packetId;
+    uint64_t connectionGeneration = 0;
+    std::atomic<uint32_t> packetId{0};
     std::string host;
     uint16_t port;
     asio::ip::tcp::resolver resolver;
-    asio::ip::tcp::socket socket;
+    std::shared_ptr<asio::ip::tcp::socket> socket;
     asio::steady_timer connectionTimer;
     asio::executor_work_guard<asio::io_context::executor_type> workGuard;
-    std::deque<std::vector<uint8_t>> sendQueue;
+    std::deque<std::shared_ptr<std::vector<uint8_t>>> sendQueue;
 
 };

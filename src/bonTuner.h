@@ -42,7 +42,7 @@ public:
 	void Release(void);
 
 protected:
-	IBonDriver2* pBonDriver2;
+	IBonDriver2* pBonDriver2 = nullptr;
 	std::vector<uint8_t> inputBuffer;
 	std::vector<uint8_t> outputBuffer;
 	std::mutex mutex;

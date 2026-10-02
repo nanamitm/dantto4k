@@ -1,242 +1,215 @@
 #include "casProxyClient.h"
+#include <array>
+#include <future>
 
 CasProxyClient::CasProxyClient(const std::string& host, uint16_t port)
-    : host(host), port(port), resolver(io_context), socket(io_context), connectionTimer(io_context), workGuard(asio::make_work_guard(io_context)) {
+    : host(host), port(port), resolver(io_context), connectionTimer(io_context), workGuard(asio::make_work_guard(io_context)) {
     thread = std::thread([this]() { io_context.run(); });
 }
 
 CasProxyClient::~CasProxyClient() {
     close();
-
-    if (thread.joinable()) {
-        thread.join();
-    }
+    workGuard.reset();
+    io_context.stop();
+    if (thread.joinable()) thread.join();
 }
 
 void CasProxyClient::connect() {
-    std::lock_guard<std::mutex> lock(connectionMutex);
-    if (connecting) {
+    std::lock_guard<std::mutex> lock(mutex);
+    auto promise = std::make_shared<std::promise<bool>>();
+    auto future = promise->get_future(); // Acquire before posting any completion.
+    asio::post(io_context, [this, promise]() {
+        ensureConnected([promise](bool ok) { promise->set_value(ok); });
+    });
+    if (future.wait_for(std::chrono::milliseconds(kConnectionTimeoutMs + 1000)) != std::future_status::ready || !future.get()) {
+        asio::post(io_context, [this]() { disconnect(); });
+        throw std::runtime_error("Failed to connect to CasProxyServer");
+    }
+}
+
+void CasProxyClient::ensureConnected(std::function<void(bool)> completion) {
+    if (connected) {
+        completion(true);
         return;
     }
-
+    connectionWaiters.push_back(std::move(completion));
+    if (connecting) return;
     connecting = true;
+    const auto generation = ++connectionGeneration;
+    socket = std::make_shared<asio::ip::tcp::socket>(io_context);
+    const auto currentSocket = socket;
     connectionTimer.expires_after(std::chrono::milliseconds(kConnectionTimeoutMs));
-    connectionTimer.async_wait([this](const std::error_code& error) {
-        if (!error && !connected) {
-            onFail();
-        }
+    connectionTimer.async_wait([this, generation](const std::error_code& ec) {
+        if (!ec && generation == connectionGeneration && !connected) onFail();
     });
-
-    asio::ip::tcp::resolver::query query(host, std::to_string(port));
-    resolver.async_resolve(query,
-        [this](std::error_code ec, asio::ip::tcp::resolver::results_type results) {
-            if (!ec) {
-                asio::async_connect(socket, results,
-                    [this](std::error_code ec, const asio::ip::tcp::endpoint&) {
-                        connectionTimer.cancel();
-                        if (!ec) {
-                            onOpen();
-                            doRead();
-                        }
-                        else {
-                            onFail();
-                        }
-                    });
-            }
-            else {
-                connectionTimer.cancel();
+    resolver.async_resolve(host, std::to_string(port),
+        [this, generation, currentSocket](std::error_code ec, asio::ip::tcp::resolver::results_type results) {
+            if (generation != connectionGeneration) return;
+            if (ec) {
                 onFail();
+                return;
             }
-        }
-    );
+            asio::async_connect(*currentSocket, results,
+                [this, generation, currentSocket](std::error_code error, const asio::ip::tcp::endpoint&) {
+                    if (generation != connectionGeneration) return;
+                    if (error) {
+                        onFail();
+                    } else {
+                        onOpen();
+                        doRead();
+                    }
+                });
+        });
 }
 
 void CasProxyClient::close() {
-    for (auto& promise : mapResponsePromise) {
-        promise.second.set_value(nullptr);
+    if (io_context.get_executor().running_in_this_thread()) {
+        disconnect();
+        return;
     }
-    mapResponsePromise.clear();
+    auto promise = std::make_shared<std::promise<void>>();
+    auto future = promise->get_future();
+    asio::post(io_context, [this, promise]() {
+        disconnect();
+        promise->set_value();
+    });
+    future.get();
+}
 
-    std::deque<std::vector<uint8_t>> empty;
-    sendQueue.swap(empty);
-
-    if (socket.is_open()) {
-        asio::error_code ec;
-        socket.cancel(ec);
-        socket.close(ec);
-    }
-
-    connectionTimer.cancel();
-
-    workGuard.reset();
-    io_context.stop();
-
-    std::lock_guard<std::mutex> lock(connectionMutex);
+void CasProxyClient::disconnect() {
+    // Keep the executor alive for reconnects. Only destruction stops it.
+    ++connectionGeneration;
     connected = false;
     connecting = false;
-}
-
-void CasProxyClient::doRead() {
-    asio::async_read(socket, asio::buffer(&packetLength, 4),
-        [this](std::error_code ec, std::size_t) {
-            if (!ec) {
-                packetLength = casproxy::swapEndian32(packetLength);
-                if (packetLength > 100 * 1024) {
-                    return;
-                }
-
-                readPacketData();
-            }
-            else if (ec != asio::error::eof) {
-                close();
-            }
-        }
-    );
-}
-
-void CasProxyClient::readPacketData() {
-    packetData.resize(packetLength);
-    asio::async_read(socket, asio::buffer(packetData),
-        [this](std::error_code ec, std::size_t) {
-            if (!ec) {
-                handleResponse();
-                doRead();
-            }
-            else if (ec != asio::error::eof) {
-                close();
-            }
-        }
-    );
-}
-
-void CasProxyClient::handleResponse() {
-    casproxy::StreamReader reader(packetData);
-
-    uint32_t packetId, resultCode, opcodeValue;
-    if (!reader.read(packetId) || !reader.read(resultCode) || !reader.read(opcodeValue)) {
-        return;
+    resolver.cancel();
+    connectionTimer.cancel();
+    if (socket) {
+        asio::error_code ec;
+        socket->cancel(ec);
+        socket->close(ec);
+        socket.reset();
     }
-
-    packetId = casproxy::swapEndian32(packetId);
-    resultCode = casproxy::swapEndian32(resultCode);
-    opcodeValue = casproxy::swapEndian32(opcodeValue);
-    casproxy::Opcode opcode = static_cast<casproxy::Opcode>(opcodeValue);
-
-    auto res = casproxy::ResponseFactory::create(opcode);
-    if (!res) {
-        return;
-    }
-
-    if (!res->unpack(packetId, resultCode, reader)) {
-        return;
-    }
-
-    std::lock_guard<std::mutex> lock(responsePromiseMutex);
-    auto it = mapResponsePromise.find(packetId);
-    if (it != mapResponsePromise.end()) {
-        it->second.set_value(std::move(res));
-    }
+    // In-flight writes retain their own shared buffer until cancellation completes.
+    sendQueue.clear();
+    for (auto& [id, promise] : mapResponsePromise) promise->set_value(nullptr);
+    mapResponsePromise.clear();
+    auto waiters = std::move(connectionWaiters);
+    connectionWaiters.clear();
+    for (auto& completion : waiters) completion(false);
 }
 
 void CasProxyClient::onOpen() {
-    std::lock_guard<std::mutex> lock(connectionMutex);
+    connectionTimer.cancel();
     connected = true;
     connecting = false;
-
-    if (connectionPromise) {
-        connectionPromise->set_value(true);
-        connectionPromise = std::nullopt;
-    }
+    auto waiters = std::move(connectionWaiters);
+    connectionWaiters.clear();
+    for (auto& completion : waiters) completion(true);
 }
 
 void CasProxyClient::onFail() {
-    close();
-
-    std::lock_guard<std::mutex> lock(connectionMutex);
-    connected = false;
-    connecting = false;
-
-
-    if (connectionPromise) {
-        connectionPromise->set_value(false);
-        connectionPromise = std::nullopt;
-    }
+    disconnect();
 }
 
-void CasProxyClient::onClose() {
-    connected = false;
+void CasProxyClient::doRead() {
+    const auto currentSocket = socket;
+    const auto generation = connectionGeneration;
+    auto lengthBytes = std::make_shared<std::array<uint8_t, 4>>();
+    asio::async_read(*currentSocket, asio::buffer(*lengthBytes),
+        [this, generation, currentSocket, lengthBytes](std::error_code ec, std::size_t) {
+            if (generation != connectionGeneration) return;
+            if (ec) {
+                disconnect(); // EOF is also a disconnect, not an idle connection.
+                return;
+            }
+            uint32_t length = 0;
+            memcpy(&length, lengthBytes->data(), sizeof(length));
+            length = casproxy::swapEndian32(length);
+            if (length < 12 || length > 100 * 1024) {
+                disconnect();
+                return;
+            }
+            readPacketData(length);
+        });
+}
+
+void CasProxyClient::readPacketData(uint32_t length) {
+    const auto currentSocket = socket;
+    const auto generation = connectionGeneration;
+    auto data = std::make_shared<std::vector<uint8_t>>(length);
+    asio::async_read(*currentSocket, asio::buffer(*data),
+        [this, generation, currentSocket, data](std::error_code ec, std::size_t) {
+            if (generation != connectionGeneration) return;
+            if (ec) {
+                disconnect();
+                return;
+            }
+            handleResponse(*data);
+            doRead();
+        });
+}
+
+void CasProxyClient::handleResponse(const std::vector<uint8_t>& data) {
+    casproxy::StreamReader reader(data);
+    uint32_t id, resultCode, opcodeValue;
+    if (!reader.read(id) || !reader.read(resultCode) || !reader.read(opcodeValue)) return;
+    id = casproxy::swapEndian32(id);
+    resultCode = casproxy::swapEndian32(resultCode);
+    auto res = casproxy::ResponseFactory::create(static_cast<casproxy::Opcode>(casproxy::swapEndian32(opcodeValue)));
+    if (!res || !res->unpack(id, resultCode, reader)) return;
+    auto it = mapResponsePromise.find(id);
+    if (it != mapResponsePromise.end()) {
+        it->second->set_value(std::move(res));
+        mapResponsePromise.erase(it); // A duplicate response cannot fulfill twice.
+    }
 }
 
 std::shared_ptr<casproxy::ResponseBase> CasProxyClient::sendRequest(casproxy::RequestBase& req) {
-    if (connected == false) {
-        connectionPromise = std::promise<bool>();
-        connect();
-
-        auto future = connectionPromise->get_future();
-        if (!future.get()) {
-            throw std::runtime_error("Failed to connect to CasProxyServer");
-        }
-    }
-
     std::lock_guard<std::mutex> lock(mutex);
     casproxy::StreamWriter writer;
     req.packetId = packetId.fetch_add(1, std::memory_order_relaxed);
     req.pack(writer);
-
-    uint32_t packetLength = static_cast<uint32_t>(writer.buffer.size());
-    std::vector<uint8_t> packet(packetLength + 4);
-    packetLength = casproxy::swapEndian32(packetLength);
-    memcpy(packet.data(), &packetLength, 4);
-    memcpy(packet.data() + 4, writer.buffer.data(), writer.buffer.size());
-
-    std::promise<std::shared_ptr<casproxy::ResponseBase>> promise;
-    auto future = promise.get_future();
-
-    {
-        std::lock_guard<std::mutex> lock(responsePromiseMutex);
-        mapResponsePromise.emplace(req.packetId, std::move(promise));
-    }
-
-    sendQueue.push_back(packet);
-    if (sendQueue.size() < 2) {
-        doWrite();
-    }
-
-    if (future.wait_for(std::chrono::milliseconds(kRequestTimeoutMs)) == std::future_status::timeout) {
-        std::lock_guard<std::mutex> lock(responsePromiseMutex);
-        mapResponsePromise.erase(req.packetId);
+    const auto id = req.packetId;
+    auto packet = std::make_shared<std::vector<uint8_t>>(writer.buffer.size() + 4);
+    const uint32_t length = casproxy::swapEndian32(static_cast<uint32_t>(writer.buffer.size()));
+    memcpy(packet->data(), &length, 4);
+    memcpy(packet->data() + 4, writer.buffer.data(), writer.buffer.size());
+    auto promise = std::make_shared<std::promise<std::shared_ptr<casproxy::ResponseBase>>>();
+    auto future = promise->get_future();
+    asio::post(io_context, [this, id, packet, promise]() {
+        ensureConnected([this, id, packet, promise](bool ok) {
+            if (!ok) {
+                promise->set_value(nullptr);
+                return;
+            }
+            mapResponsePromise.emplace(id, promise);
+            sendQueue.push_back(packet);
+            if (sendQueue.size() == 1) doWrite();
+        });
+    });
+    // Bound the entire request, including resolving and connecting.
+    if (future.wait_for(std::chrono::milliseconds(kConnectionTimeoutMs + kRequestTimeoutMs)) != std::future_status::ready) {
+        asio::post(io_context, [this]() { disconnect(); });
         throw std::runtime_error("Timeout while requesting CasProxyServer");
     }
-
-    auto res = future.get();
-    {
-        std::lock_guard<std::mutex> lock(responsePromiseMutex);
-        mapResponsePromise.erase(req.packetId);
-    }
-
-    if (!res) {
-        return nullptr;
-    }
-
-    return res;
+    return future.get();
 }
 
 void CasProxyClient::doWrite() {
-    if (sendQueue.empty()) {
-        return;
-    }
-
-    asio::async_write(socket, asio::buffer(sendQueue.front()),
-        [this](std::error_code ec, std::size_t) {
+    if (sendQueue.empty()) return;
+    const auto packet = sendQueue.front();
+    const auto currentSocket = socket;
+    const auto generation = connectionGeneration;
+    asio::async_write(*currentSocket, asio::buffer(*packet),
+        [this, generation, currentSocket, packet](std::error_code ec, std::size_t) {
+            if (generation != connectionGeneration) return;
             if (ec) {
-                close();
-            }
-            else {
+                disconnect();
+            } else {
                 sendQueue.pop_front();
                 doWrite();
             }
-        }
-    );
+        });
 }
 
 LONG CasProxyClient::scardEstablishContext(DWORD dwScope, LPCVOID pvReserved1, LPCVOID pvReserved2, LPSCARDCONTEXT phContext) {
