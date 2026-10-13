@@ -186,6 +186,8 @@
     <ClCompile Include="../src/contentCopyControlDescriptor.cpp" />
     <ClCompile Include="../src/dataTransmissionMessage.cpp" />
     <ClCompile Include="../src/dataUnit.cpp" />
+    <ClCompile Include="../src/appDataDumper.cpp" />
+    <ClCompile Include="../src/zlibInflate.cpp" />
     <ClCompile Include="../src/demuxerTeeHandler.cpp" />
     <ClCompile Include="../src/dllmain.cpp" />
     <ClCompile Include="../src/ecm.cpp" />
@@ -306,6 +308,8 @@
     <ClInclude Include="../src/contentCopyControlDescriptor.h" />
     <ClInclude Include="../src/dataTransmissionMessage.h" />
     <ClInclude Include="../src/dataUnit.h" />
+    <ClInclude Include="../src/appDataDumper.h" />
+    <ClInclude Include="../src/zlibInflate.h" />
     <ClInclude Include="../src/demuxerTeeHandler.h" />
     <ClInclude Include="../src/descriptorConverter.h" />
     <ClInclude Include="../src/ecm.h" />

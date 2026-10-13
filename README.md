@@ -62,6 +62,16 @@ dantto4k --write-mmtsmap-only input.mmts
 dantto4k --write-mmtsmap-only --mmtsmap output.mmtsmap input.mmts
 ```
 
+#### データ放送ファイルの書き出し (実験的)
+
+`--dump-app-data` を指定すると、データ放送 (ARIB STD-B62) のアプリケーションファイルを指定ディレクトリに書き出します。
+DDMT・DAMT・インデックスアイテムから元のパスを復元し、zlib 圧縮されたファイルは展開して保存します。
+MH-AIT などの制御情報と各ファイルの対応は `manifest.txt` に出力されます。
+
+```
+dantto4k --frontend-descrambled --dump-app-data appdata input.mmts
+```
+
 ### BonDriver_dantto4k.dll
 リアルタイムで復号化とMPEG-2 TSへの変換を行うBonDriverです。
 BonDriver_dantto4k.iniで設定されたBonDriverをロードして、復号化とMPEG-2 TSへの変換を行います。

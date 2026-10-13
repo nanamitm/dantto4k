@@ -6,6 +6,7 @@
 #include "mmtTlvDemuxer.h"
 #include "demuxerHandler.h"
 #include "mmtsMapWriter.h"
+#include "appDataDumper.h"
 #include "casProxyClient.h"
 #include "acasHandler.h"
 #include "smartCard.h"
@@ -49,6 +50,7 @@ struct Args {
     bool probeTsVideoPts{false};
     bool probeTsClocks{false};
     bool probeBitrate{false};
+    std::string dumpAppDataDirectory;
     size_t probeSampleLimit{128};
     uint64_t probeBitrateSampleBytes{256ULL * 1024 * 1024};
 };
@@ -547,6 +549,7 @@ Args parseArguments(int argc, char* argv[]) {
             ("probe-ts-clocks", "Probe MPEG-2 TS PCR and video/audio PES PTS values", cxxopts::value<bool>()->default_value("false"))
             ("probe-bitrate", "Estimate average bitrate (Mbps) from MPU presentation timestamps and print it", cxxopts::value<bool>()->default_value("false"))
             ("probe-bitrate-sample-mb", "With --probe-bitrate, stop after reading this many MB instead of scanning the whole file (0 = no limit, scan to EOF)", cxxopts::value<uint64_t>()->default_value("256"))
+            ("dump-app-data", "Experimental: write data broadcasting application files (aapp assets) into the given directory", cxxopts::value<std::string>())
             ("probe-sample-limit", "Number of initial MFU samples to print per video stream", cxxopts::value<size_t>()->default_value("128"))
             ("no-progress", "Disable progress display", cxxopts::value<bool>()->default_value("false"))
             ("no-stats", "Disable packet statistics", cxxopts::value<bool>()->default_value("false"))
@@ -567,7 +570,8 @@ Args parseArguments(int argc, char* argv[]) {
         const bool probeTsVideoPts = result["probe-ts-video-pts"].as<bool>();
         const bool probeTsClocks = result["probe-ts-clocks"].as<bool>();
         const bool probeBitrate = result["probe-bitrate"].as<bool>();
-        const bool probeOnly = probeVideoTimestamps || probeTsVideoPts || probeTsClocks || probeBitrate;
+        const bool dumpAppData = result["dump-app-data"].count() > 0;
+        const bool probeOnly = probeVideoTimestamps || probeTsVideoPts || probeTsClocks || probeBitrate || dumpAppData;
         if (!result.count("listSmartCardReader") &&
             (!result.count("input") || (!writeMmtsMapOnly && !probeOnly && !result.count("output")))) {
             std::cout << options.help() << std::endl;
@@ -583,6 +587,13 @@ Args parseArguments(int argc, char* argv[]) {
         args.probeBitrate = probeBitrate;
         args.probeSampleLimit = result["probe-sample-limit"].as<size_t>();
         args.probeBitrateSampleBytes = result["probe-bitrate-sample-mb"].as<uint64_t>() * 1024ULL * 1024ULL;
+        if (dumpAppData) {
+            args.dumpAppDataDirectory = result["dump-app-data"].as<std::string>();
+            if (args.dumpAppDataDirectory.empty()) {
+                std::cerr << "--dump-app-data requires a directory" << std::endl;
+                std::exit(1);
+            }
+        }
 
         if (result["casProxyServer"].count()) {
             std::string casProxyServer = result["casProxyServer"].as<std::string>();
@@ -610,7 +621,7 @@ Args parseArguments(int argc, char* argv[]) {
 #endif
 
         if (!args.listSmartCardReader) {
-            const bool outputRequired = !args.writeMmtsMapOnly && !args.probeVideoTimestamps && !args.probeTsVideoPts && !args.probeTsClocks && !args.probeBitrate;
+            const bool outputRequired = !args.writeMmtsMapOnly && !args.probeVideoTimestamps && !args.probeTsVideoPts && !args.probeTsClocks && !args.probeBitrate && args.dumpAppDataDirectory.empty();
             if (!result.count("input") || (outputRequired && !result.count("output"))) {
                 std::cerr << (outputRequired ? "input and output arguments are required" : "input argument is required") << std::endl;
                 std::exit(1);
@@ -685,6 +696,12 @@ Args parseArguments(int argc, char* argv[]) {
         if (args.probeBitrate) {
             args.noProgress = true;
             args.noStats = true;
+            args.decodeMmts = false;
+            args.writeMmtsMap = false;
+            args.writeMmtsMapOnly = false;
+            args.output.clear();
+        }
+        if (!args.dumpAppDataDirectory.empty()) {
             args.decodeMmts = false;
             args.writeMmtsMap = false;
             args.writeMmtsMapOnly = false;
@@ -891,7 +908,7 @@ int main(int argc, char* argv[]) {
 
     std::ostream* outputStream = nullptr;
     std::unique_ptr<std::ofstream> outputFs;
-    if (args.probeVideoTimestamps || args.writeMmtsMapOnly || args.probeTsVideoPts || args.probeTsClocks || args.probeBitrate) {
+    if (args.probeVideoTimestamps || args.writeMmtsMapOnly || args.probeTsVideoPts || args.probeTsClocks || args.probeBitrate || !args.dumpAppDataDirectory.empty()) {
         outputStream = nullptr;
     }
     else if (useStdout) {
@@ -912,10 +929,14 @@ int main(int argc, char* argv[]) {
     VideoTimestampProbeHandler probeHandler(demuxer, args.probeSampleLimit);
     BitrateProbeHandler bitrateProbeHandler(demuxer);
     MmtTlv::MmtsMapWriter mapWriter;
+    MmtTlv::AppDataDumper appDataDumper(std::filesystem::path(args.dumpAppDataDirectory));
     std::unique_ptr<BufferedOutput> bufferedOutput;
     uint64_t decodeFailedPacketCount = 0;
 
-    if (args.probeVideoTimestamps) {
+    if (!args.dumpAppDataDirectory.empty()) {
+        demuxer.setDemuxerHandler(appDataDumper);
+    }
+    else if (args.probeVideoTimestamps) {
         demuxer.setDemuxerHandler(probeHandler);
     }
     else if (args.probeBitrate) {
@@ -1067,6 +1088,10 @@ int main(int argc, char* argv[]) {
     if (mapWriter.isOpen()) {
         mapWriter.close();
         std::cerr << "MMTS map written: " << args.mmtsMapPath << std::endl;
+    }
+
+    if (!args.dumpAppDataDirectory.empty() && !appDataDumper.finish()) {
+        return 1;
     }
 
     if (args.probeBitrate) {
