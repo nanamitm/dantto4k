@@ -212,9 +212,8 @@ void AppDataDumper::onDamt(const Damt& damt) {
 
 void AppDataDumper::onDdmt(const Ddmt& ddmt) {
     const uint8_t session = ddmt.dataTransmissionSessionId;
-    ddmtBaseDirectories[session] = ddmt.baseDirectoryPath;
     for (const auto& node : ddmt.nodes) {
-        ddmtNodes[{ session, node.nodeTag }] = DdmtNode{ node.directoryNodePath, node.directoryNodeVersion };
+        ddmtNodes[{ session, node.nodeTag }] = DdmtNode{ ddmt.baseDirectoryPath, node.directoryNodePath, node.directoryNodeVersion };
         for (const auto& file : node.files) {
             ddmtFiles[{ session, file.nodeTag }] = DdmtFile{ node.nodeTag, file.fileName };
         }
@@ -308,11 +307,6 @@ AppDataDumper::Resolved AppDataDumper::resolvePath(const ItemKey& key) const {
     const auto& damtMpu = damt->second;
     const uint8_t session = damtMpu.sessionId;
 
-    std::filesystem::path base;
-    if (auto it = ddmtBaseDirectories.find(session); it != ddmtBaseDirectories.end()) {
-        base = sanitizeRelativePath(it->second);
-    }
-
     if (damtMpu.indexItemFlag) {
         auto index = indexes.find({ componentTag, mpuSequenceNumber });
         if (index == indexes.end() || !index->second.indexItemId) {
@@ -333,7 +327,7 @@ AppDataDumper::Resolved AppDataDumper::resolvePath(const ItemKey& key) const {
         std::filesystem::path directory;
         if (damtMpu.nodeTag) {
             if (auto node = ddmtNodes.find({ session, *damtMpu.nodeTag }); node != ddmtNodes.end()) {
-                directory = sanitizeRelativePath(node->second.path);
+                directory = sanitizeRelativePath(node->second.base) / sanitizeRelativePath(node->second.path);
             }
             else {
                 resolved.note += " no_ddmt_node=" + std::to_string(*damtMpu.nodeTag);
@@ -347,7 +341,7 @@ AppDataDumper::Resolved AppDataDumper::resolvePath(const ItemKey& key) const {
             resolved.note += " compression=" + std::to_string(entry->second.compressionType) + " original_size=" + std::to_string(entry->second.originalSize);
         }
         resolved.indexEntry = entry->second;
-        resolved.path = base / directory / sanitizeRelativePath(entry->second.fileName);
+        resolved.path = directory / sanitizeRelativePath(entry->second.fileName);
         resolved.unresolved = false;
         return resolved;
     }
@@ -364,9 +358,9 @@ AppDataDumper::Resolved AppDataDumper::resolvePath(const ItemKey& key) const {
         }
         std::filesystem::path directory;
         if (auto node = ddmtNodes.find({ session, file->second.directoryNodeTag }); node != ddmtNodes.end()) {
-            directory = sanitizeRelativePath(node->second.path);
+            directory = sanitizeRelativePath(node->second.base) / sanitizeRelativePath(node->second.path);
         }
-        resolved.path = base / directory / sanitizeRelativePath(file->second.fileName);
+        resolved.path = directory / sanitizeRelativePath(file->second.fileName);
         resolved.unresolved = false;
         return resolved;
     }
@@ -404,12 +398,10 @@ bool AppDataDumper::finish() {
         manifest << text;
     }
     manifest << "\n[DDMT]\n";
-    for (const auto& [session, base] : ddmtBaseDirectories) {
-        manifest << "session=" << static_cast<int>(session) << " base=\"" << base << "\"\n";
-    }
     for (const auto& [key, node] : ddmtNodes) {
         manifest << "  node session=" << static_cast<int>(key.first) << " tag=" << key.second
-                 << " version=" << static_cast<int>(node.version) << " path=\"" << node.path << "\"\n";
+                 << " version=" << static_cast<int>(node.version)
+                 << " base=\"" << node.base << "\" path=\"" << node.path << "\"\n";
     }
     for (const auto& [key, file] : ddmtFiles) {
         manifest << "  file session=" << static_cast<int>(key.first) << " tag=" << key.second

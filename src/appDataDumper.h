@@ -63,6 +63,9 @@ private:
     };
 
     struct DdmtNode {
+        // Each DDMT section carries its own base_directory_path, so the base
+        // belongs to the node rather than to the session.
+        std::string base;
         std::string path;
         uint8_t version{};
     };
@@ -104,7 +107,6 @@ private:
     // (data_transmission_session_id, node_tag)
     std::map<std::pair<uint8_t, uint16_t>, DdmtNode> ddmtNodes;
     std::map<std::pair<uint8_t, uint16_t>, DdmtFile> ddmtFiles;
-    std::map<uint8_t, std::string> ddmtBaseDirectories;
     // (component_tag, mpu_sequence_number)
     std::map<std::pair<int32_t, uint32_t>, DamtMpu> damtMpus;
     std::map<std::pair<int32_t, uint32_t>, IndexInfo> indexes;
