@@ -98,6 +98,12 @@ void DemuxerTeeHandler::onDcct(const Dcct& dcct)
     second.onDcct(dcct);
 }
 
+void DemuxerTeeHandler::onApplicationTableSection(uint16_t packetId, const uint8_t* data, size_t size)
+{
+    first.onApplicationTableSection(packetId, data, size);
+    second.onApplicationTableSection(packetId, data, size);
+}
+
 void DemuxerTeeHandler::onNit(const Nit& nit)
 {
     first.onNit(nit);

@@ -393,8 +393,61 @@ void RemuxerHandler::onPacketDrop(uint16_t packetId, const MmtTlv::MmtStream* mm
     }
 }
 
+RemuxerHandler::RemuxerHandler(MmtTlv::MmtTlvDemuxer& demuxer)
+    : demuxer(demuxer) {
+    duck.addStandards(ts::Standards::ISDB);
+    appDataTransport.setSectionCallback([this](uint16_t serviceId, const uint8_t* data, size_t size) {
+        writeAppDataSection(serviceId, data, size);
+    });
+}
+
 void RemuxerHandler::setOutputCallback(OutputCallback cb) {
     outputCallback = std::move(cb);
+}
+
+void RemuxerHandler::onApplicationData(const MmtTlv::MmtStream& mmtStream, const MmtTlv::Mpu& mpu, const MmtTlv::DataUnit& dataUnit, const MmtTlv::MfuData& mfuData) {
+    if (!config.appDataTransport) {
+        return;
+    }
+    // Read here, not in the constructor: the BonDriver's handler is a global
+    // that is built before the ini is loaded.
+    appDataTransport.setItemResendInterval(static_cast<uint64_t>(config.appDataItemResendSeconds) * 90000);
+    appDataTransport.onApplicationData(mmtStream, mpu, dataUnit, mfuData, appDataClock90k());
+}
+
+void RemuxerHandler::onApplicationTableSection(uint16_t packetId, const uint8_t* data, size_t size) {
+    if (!config.appDataTransport) {
+        return;
+    }
+    appDataTransport.onTableSection(packetId, data, size, appDataClock90k());
+}
+
+void RemuxerHandler::writeAppDataSection(uint16_t serviceId, const uint8_t* data, size_t size) {
+    auto it = mapService2Pid.find(serviceId);
+    if (it == mapService2Pid.end()) {
+        return;
+    }
+    const uint16_t pid = appDataPid(it->second);
+
+    auto section = std::make_shared<ts::Section>(data, size, pid, ts::CRC32::Validation::IGNORE);
+    if (!section->isValid()) {
+        return;
+    }
+
+    auto& cc = mapCC[pid];
+    ts::OneShotPacketizer packetizer(duck, pid);
+    packetizer.addSection(section);
+
+    ts::TSPacketVector packets;
+    packetizer.getPackets(packets);
+    for (auto& packet : packets) {
+        packet.setCC(cc & 0xF);
+        cc++;
+
+        if (outputCallback) {
+            outputCallback(packet.b, packet.getHeaderSize() + packet.getPayloadSize());
+        }
+    }
 }
 
 void RemuxerHandler::writeStream(const MmtTlv::MmtStream& mmtStream, const MmtTlv::MfuData& mfuData, const std::vector<uint8_t>& streamData) {
@@ -1138,6 +1191,9 @@ void RemuxerHandler::onMpt(const MmtTlv::Mpt& mpt) {
         serviceId = MmtTlv::Common::swapEndian16(serviceId);
     }
 
+    // Routing must follow the MPT even before the PLT gives the service a PMT.
+    appDataTransport.onMpt(serviceId, mpt);
+
     auto it = mapService2Pid.find(serviceId);
     if (it == mapService2Pid.end()) {
         return;
@@ -1267,6 +1323,16 @@ void RemuxerHandler::onMpt(const MmtTlv::Mpt& mpt) {
             break;
         }
         }
+    }
+
+    if (config.appDataTransport && appDataTransport.hasApplicationService(serviceId)) {
+        // Data broadcasting as private sections. No stream identifier
+        // descriptor: web-bml only looks at components that have one.
+        ts::PMT::Stream stream(&tsPmt, StreamType::PRIVATE_SECTION);
+        ts::RegistrationDescriptor descriptor;
+        descriptor.format_identifier = MmtTlv::AppDataTransport::kFormatIdentifier;
+        stream.descs.add(duck, descriptor);
+        tsPmt.streams[appDataPid(pid)] = stream;
     }
 
     ts::BinaryTable table;
@@ -1434,6 +1500,7 @@ void RemuxerHandler::clear() {
     mapPesState.clear();
     mapSubtitleDrcsGlyphs.clear();
     mapPendingSubtitleTtml.clear();
+    appDataTransport.clear();
     tsid = -1;
     lastPcr = 0;
     lastWrittenPcr = 0;

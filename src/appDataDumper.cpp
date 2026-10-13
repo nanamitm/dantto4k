@@ -80,66 +80,13 @@ AppDataDumper::AppDataDumper(std::filesystem::path outputDirectory)
 }
 
 void AppDataDumper::onApplicationData(const MmtStream& mmtStream, const Mpu& mpu, const DataUnit& dataUnit, const MfuData& mfuData) {
-    fragmentCount++;
-    const uint16_t packetId = mmtStream.getPacketId();
-    const int32_t componentTag = mmtStream.getComponentTag();
-    auto pending = pendingByPacketId.find(packetId);
-
-    switch (mpu.fragmentationIndicator) {
-    case FragmentationIndicator::NotFragmented:
-        if (pending != pendingByPacketId.end()) {
-            abandonedItemCount++;
-            pendingByPacketId.erase(pending);
-        }
-        completeItem(componentTag, PendingItem{ mpu.mpuSequenceNumber, dataUnit.itemId, mfuData.data });
-        return;
-
-    case FragmentationIndicator::FirstFragment:
-        if (pending != pendingByPacketId.end()) {
-            abandonedItemCount++;
-        }
-        pendingByPacketId[packetId] = PendingItem{ mpu.mpuSequenceNumber, dataUnit.itemId, mfuData.data };
-        return;
-
-    case FragmentationIndicator::MiddleFragment:
-    case FragmentationIndicator::LastFragment:
-        break;
-    }
-
-    if (pending == pendingByPacketId.end() || pending->second.mpuSequenceNumber != mpu.mpuSequenceNumber) {
-        orphanFragmentCount++;
-        if (pending != pendingByPacketId.end()) {
-            abandonedItemCount++;
-            pendingByPacketId.erase(pending);
-        }
-        return;
-    }
-
-    auto& item = pending->second;
-    // DataUnit::unpack always consumes a 4-byte item_id. If continuation
-    // fragments do not repeat it, those four bytes were payload: put them back.
-    if (dataUnit.itemId == item.itemId) {
-        continuationWithItemId++;
-    }
-    else {
-        continuationWithoutItemId++;
-        const uint32_t v = dataUnit.itemId;
-        const uint8_t bytes[4] = {
-            static_cast<uint8_t>(v >> 24), static_cast<uint8_t>(v >> 16),
-            static_cast<uint8_t>(v >> 8), static_cast<uint8_t>(v) };
-        item.data.insert(item.data.end(), bytes, bytes + 4);
-    }
-    item.data.insert(item.data.end(), mfuData.data.begin(), mfuData.data.end());
-
-    if (mpu.fragmentationIndicator == FragmentationIndicator::LastFragment) {
-        auto completed = std::move(item);
-        pendingByPacketId.erase(pending);
-        completeItem(componentTag, std::move(completed));
+    if (auto item = assembler.push(mmtStream, mpu, dataUnit, mfuData)) {
+        completeItem(std::move(*item));
     }
 }
 
-void AppDataDumper::completeItem(int32_t componentTag, PendingItem&& item) {
-    auto& versions = items[{ componentTag, item.mpuSequenceNumber, item.itemId }];
+void AppDataDumper::completeItem(AppItemAssembler::Item&& item) {
+    auto& versions = items[{ item.componentTag, item.mpuSequenceNumber, item.itemId }];
     const size_t hash = hashBytes(item.data);
     for (auto& version : versions) {
         if (version.hash == hash && version.data == item.data) {
@@ -383,11 +330,11 @@ bool AppDataDumper::finish() {
     }
 
     manifest << "# dantto4k application data dump (experimental)\n";
-    manifest << "fragments=" << fragmentCount
-             << " orphan_fragments=" << orphanFragmentCount
-             << " abandoned_items=" << abandonedItemCount
-             << " continuation_with_item_id=" << continuationWithItemId
-             << " continuation_without_item_id=" << continuationWithoutItemId << "\n\n";
+    manifest << "fragments=" << assembler.fragmentCount
+             << " orphan_fragments=" << assembler.orphanFragmentCount
+             << " abandoned_items=" << assembler.abandonedItemCount
+             << " continuation_with_item_id=" << assembler.continuationWithItemId
+             << " continuation_without_item_id=" << assembler.continuationWithoutItemId << "\n\n";
 
     manifest << "[MH-AIT]\n";
     for (const auto& text : aitLog) {
@@ -482,7 +429,7 @@ bool AppDataDumper::finish() {
         }
     }
 
-    for (const auto& [packetId, pending] : pendingByPacketId) {
+    for (const auto& [packetId, pending] : assembler.getPendingItems()) {
         manifest << "INCOMPLETE packet_id=" << hex(packetId, 4) << " mpu=" << pending.mpuSequenceNumber
                  << " item=" << pending.itemId << " bytes=" << pending.data.size() << "\n";
     }

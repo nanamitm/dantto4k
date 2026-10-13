@@ -44,6 +44,9 @@ public:
     virtual void onDamt(const Damt& damt) {}
 	virtual void onDdmt(const Ddmt& damt) {}
 	virtual void onDcct(const Dcct& damt) {}
+	// Raw bytes of an MH-AIT, DDMT, DAMT, DCCT or EMT section that parsed
+	// cleanly, with the packet_id it arrived on.
+	virtual void onApplicationTableSection(uint16_t packetId, const uint8_t* data, size_t size) {}
 	
 	// TLV-SI
 	virtual void onNit(const Nit& nit) {}

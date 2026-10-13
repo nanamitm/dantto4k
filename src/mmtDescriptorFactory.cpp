@@ -2,6 +2,7 @@
 #include <functional>
 #include <unordered_map>
 
+#include "applicationServiceDescriptor.h"
 #include "eventPackageDescriptor.h"
 #include "mhAudioComponentDescriptor.h"
 #include "mhCaContractInformation.h"
@@ -71,6 +72,7 @@ static const std::unordered_map<uint16_t, std::function<std::unique_ptr<MmtDescr
     { MhAutostartPriorityDescriptor::kDescriptorTag,			[] { return std::make_unique<MhAutostartPriorityDescriptor>(); } },
 	{ MhCacheControlInfoDescriptor::kDescriptorTag,				[] { return std::make_unique<MhCacheControlInfoDescriptor>(); } },
 	{ MhRandomizedLatencyDescriptor::kDescriptorTag,				[] { return std::make_unique<MhRandomizedLatencyDescriptor>(); } },
+	{ ApplicationServiceDescriptor::kDescriptorTag,				[] { return std::make_unique<ApplicationServiceDescriptor>(); } },
 };
 
 std::unique_ptr<MmtDescriptorBase> MmtDescriptorFactory::create(uint16_t tag) {

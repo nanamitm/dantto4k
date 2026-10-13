@@ -413,6 +413,27 @@ void MmtTlvDemuxer::processMmtTable(Common::ReadStream& stream) {
         return;
     }
 
+    // Keep the section bytes of the data broadcasting tables so they can be
+    // carried over unchanged. These all use the MPEG-2 long section header.
+    std::vector<uint8_t> applicationTableSection;
+    switch (tableId) {
+    case MmtTableId::MhAit:
+    case MmtTableId::Ddmt:
+    case MmtTableId::Damt:
+    case MmtTableId::Dcct:
+    case MmtTableId::Emt:
+        if (demuxerHandler && stream.leftBytes() >= 3) {
+            uint8_t header[3];
+            stream.peek(header, sizeof(header));
+            const size_t sectionSize = 3 + (((header[1] & 0x0F) << 8) | header[2]);
+            if (sectionSize <= stream.leftBytes()) {
+                applicationTableSection.resize(sectionSize);
+                stream.peek(applicationTableSection.data(), sectionSize);
+            }
+        }
+        break;
+    }
+
     if (!table->unpack(stream)) {
         // A partially parsed table must never change stream registration or
         // reach handlers. Its unread tail has no reliable next-table boundary.
@@ -483,6 +504,10 @@ void MmtTlvDemuxer::processMmtTable(Common::ReadStream& stream) {
         case MmtTableId::Dcct:
             demuxerHandler->onDcct(*dynamic_cast<Dcct*>(table.get()));
             break;
+        }
+
+        if (!applicationTableSection.empty()) {
+            demuxerHandler->onApplicationTableSection(mmtp.packetId, applicationTableSection.data(), applicationTableSection.size());
         }
     }
 }

@@ -7,6 +7,7 @@
 #include <tuple>
 #include <unordered_map>
 #include <vector>
+#include "appItemAssembler.h"
 #include "demuxerHandler.h"
 
 namespace MmtTlv {
@@ -29,12 +30,6 @@ public:
     bool finish();
 
 private:
-    struct PendingItem {
-        uint32_t mpuSequenceNumber{};
-        uint32_t itemId{};
-        std::vector<uint8_t> data;
-    };
-
     struct ItemVersion {
         std::vector<uint8_t> data;
         size_t hash{};
@@ -95,13 +90,13 @@ private:
         std::string note;
     };
 
-    void completeItem(int32_t componentTag, PendingItem&& item);
+    void completeItem(AppItemAssembler::Item&& item);
     IndexInfo loadIndexItem(int32_t componentTag, uint32_t mpuSequenceNumber, const DamtMpu& damtMpu) const;
     Resolved resolvePath(const ItemKey& key) const;
 
     std::filesystem::path outputDirectory;
 
-    std::unordered_map<uint16_t, PendingItem> pendingByPacketId;
+    AppItemAssembler assembler;
     std::map<ItemKey, std::vector<ItemVersion>> items;
 
     // (data_transmission_session_id, node_tag)
@@ -113,12 +108,6 @@ private:
 
     std::vector<std::string> aitLog;
     std::vector<std::string> dcctLog;
-
-    uint64_t fragmentCount{};
-    uint64_t orphanFragmentCount{};
-    uint64_t abandonedItemCount{};
-    uint64_t continuationWithItemId{};
-    uint64_t continuationWithoutItemId{};
 };
 
 }

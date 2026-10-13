@@ -3,6 +3,7 @@
 #include "b24SubtitleConverter.h"
 #include "ttml/drcs.h"
 #include "damt.h"
+#include "appDataTransport.h"
 #include <tsduck.h>
 #include <optional>
 #include <unordered_map>
@@ -48,15 +49,13 @@ constexpr uint16_t PCR_PID = 0x01FF;
 
 class RemuxerHandler : public MmtTlv::DemuxerHandler {
 public:
-	RemuxerHandler(MmtTlv::MmtTlvDemuxer& demuxer)
-		: demuxer(demuxer) {
-		duck.addStandards(ts::Standards::ISDB);
-	}
+	RemuxerHandler(MmtTlv::MmtTlvDemuxer& demuxer);
 
 	// MPU
 	void onVideoData(const MmtTlv::MmtStream& mmtStream, const MmtTlv::MfuData& mfuData) override;
 	void onAudioData(const MmtTlv::MmtStream& mmtStream, const MmtTlv::MfuData& mfuData) override;
 	void onSubtitleData(const MmtTlv::MmtStream& mmtStream, const MmtTlv::MfuData& mfuData) override;
+	void onApplicationData(const MmtTlv::MmtStream& mmtStream, const MmtTlv::Mpu& mpu, const MmtTlv::DataUnit& dataUnit, const MmtTlv::MfuData& mfuData) override;
 
 	// MMT-SI
 	void onMhBit(const MmtTlv::MhBit& mhCdt) override;
@@ -67,6 +66,7 @@ public:
 	void onMhTot(const MmtTlv::MhTot& mhTot) override;
 	void onMpt(const MmtTlv::Mpt& mpt) override;
 	void onPlt(const MmtTlv::Plt& plt) override;
+	void onApplicationTableSection(uint16_t packetId, const uint8_t* data, size_t size) override;
 
 	// TLV-SI
 	void onNit(const MmtTlv::Nit& nit) override;
@@ -100,6 +100,10 @@ private:
 	void writeSubtitle(const MmtTlv::MmtStream& mmtStream, const B24SubtitleOutput& subtitle,
 		std::optional<uint64_t> pts = std::nullopt);
 	void writeCaptionManagementData(uint64_t pts);
+	void writeAppDataSection(uint16_t serviceId, const uint8_t* data, size_t size);
+	// PID that carries a service's data broadcasting: just below its PMT PID.
+	static uint16_t appDataPid(uint16_t pmtPid) { return static_cast<uint16_t>(pmtPid - 0x100); }
+	uint64_t appDataClock90k() const { return lastPcr / 300; }
 	void convertAndWriteSubtitle(const MmtTlv::MmtStream& mmtStream, const std::string& ttml);
 	std::optional<uint64_t> subtitleBasePts(const MmtTlv::AdditionalAribSubtitleInfo& subtitleInfo) const;
 	MmtTlv::MmtTlvDemuxer& demuxer;
@@ -120,6 +124,7 @@ private:
 	uint64_t lastCaptionManagementDataPts{};
 	int64_t ptsOffset90k{0};
 	inline static const std::vector<uint8_t> ccis = { 0x43, 0x43, 0x49, 0x53, 0x01, 0x3F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, };
+	MmtTlv::AppDataTransport appDataTransport;
 	ts::DuckContext duck;
 
 };
