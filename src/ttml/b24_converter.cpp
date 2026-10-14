@@ -156,6 +156,11 @@ uint32_t vertical_form(uint32_t cp) {
     case 0x301C: return 0x2240; // WAVE DASH
     case 0xFF0D: return 0xFF5C; // FULLWIDTH HYPHEN-MINUS
     case 0xFF1D: return 0x2016; // FULLWIDTH EQUALS SIGN
+    case 0x2010: return 0xFE32; // HYPHEN
+    case 0x2016: return 0xFF1D; // DOUBLE VERTICAL LINE
+    case 0xFF5C: return 0x2015; // FULLWIDTH VERTICAL LINE
+    case 0x25B6: return 0x25BC; // BLACK RIGHT-POINTING TRIANGLE
+    case 0x25C0: return 0x25B2; // BLACK LEFT-POINTING TRIANGLE
     default: return cp;
     }
 }
@@ -181,15 +186,36 @@ void append_utf8(std::string& out, uint32_t cp) {
     }
 }
 
+// Small kana sit in the upper right of their cell in vertical text (ARIB
+// TR-B39 Table 8-4), where the horizontal glyph has them in the lower left.
+bool is_small_kana(uint32_t cp) {
+    switch (cp) {
+    case 0x3041: case 0x3043: case 0x3045: case 0x3047: case 0x3049:
+    case 0x3063: case 0x3083: case 0x3085: case 0x3087: case 0x308E:
+    case 0x3095: case 0x3096:
+    case 0x30A1: case 0x30A3: case 0x30A5: case 0x30A7: case 0x30A9:
+    case 0x30C3: case 0x30E3: case 0x30E5: case 0x30E7: case 0x30EE:
+    case 0x30F5: case 0x30F6:
+        return true;
+    default:
+        return cp >= 0x31F0 && cp <= 0x31FF;
+    }
+}
+
+struct VerticalCharacter {
+    std::string text;
+    bool small_kana = false;
+};
+
 // The characters of a run of vertical text, each in its vertical form. A
 // malformed byte is kept as it is, as the horizontal path would.
-std::vector<std::string> vertical_characters(std::string_view text) {
-    std::vector<std::string> characters;
+std::vector<VerticalCharacter> vertical_characters(std::string_view text) {
+    std::vector<VerticalCharacter> characters;
     for (size_t i = 0; i < text.size();) {
         const auto lead = static_cast<uint8_t>(text[i]);
         const size_t length = lead < 0x80 ? 1 : (lead >> 5) == 0x6 ? 2 : (lead >> 4) == 0xE ? 3 : (lead >> 3) == 0x1E ? 4 : 1;
         if (i + length > text.size() || length == 1) {
-            characters.emplace_back(text.substr(i, 1));
+            characters.push_back({ std::string(text.substr(i, 1)) });
             ++i;
             continue;
         }
@@ -197,8 +223,9 @@ std::vector<std::string> vertical_characters(std::string_view text) {
         for (size_t k = 1; k < length; ++k) {
             cp = (cp << 6) | (static_cast<uint8_t>(text[i + k]) & 0x3F);
         }
-        std::string character;
-        append_utf8(character, vertical_form(cp));
+        VerticalCharacter character;
+        append_utf8(character.text, vertical_form(cp));
+        character.small_kana = is_small_kana(cp);
         characters.push_back(std::move(character));
         i += length;
     }
@@ -561,7 +588,7 @@ private:
                 for (const auto& run : line.runs) {
                     if (vertical) {
                         for (const auto& character : vertical_characters(run.text)) {
-                            output.append(character);
+                            output.append(character.text);
                             output.push_back('\0');
                         }
                         continue;
@@ -666,7 +693,13 @@ private:
     // characters go down them. Each character is placed with ACPS, whose
     // position is the lower left of its character cell; SHS is 0 so the cell
     // is as wide as the glyph, and SVS is the letter spacing so the cell is
-    // as tall as one step down the column.
+    // as tall as one step down the column (the glyph is drawn SVS/2 into it,
+    // the character display zone of ARIB TR-B39 8.3.4).
+    //
+    // Two half-width characters on their own (a run of exactly two, such as
+    // a two-digit number) share one cell side by side (tate-chu-yoko); other
+    // half-width characters stand upright one per cell. Small kana move to the
+    // upper right of their cell by an eighth of the glyph.
     void encode_vertical_block(const RegionBlock& block, const std::vector<std::string>& encoded_runs, size_t& encoded_run_index) {
         const auto& origin = *block.region->style.origin;
         const auto& extent = *block.region->style.extent;
@@ -702,12 +735,25 @@ private:
                 set_line_spacing(static_cast<uint32_t>(std::round(letter_spacing / vertical_scale)));
 
                 const double glyph_width = character_composition_width_ * horizontal_scale;
+                const double glyph_height = character_composition_height_ * vertical_scale;
                 const double step = (character_composition_height_ + line_spacing_) * vertical_scale;
-                const long x = std::lround(column_left + (column_width - glyph_width) / 2);
-                const size_t count = vertical_characters(run.text).size();
-                for (size_t i = 0; i < count; ++i) {
+                const double x = column_left + (column_width - glyph_width) / 2;
+                const auto characters = vertical_characters(run.text);
+                if (character_size_ == B24ControlSet::MSZ && characters.size() == 2) {
                     y += step;
-                    append_acps(x, std::lround(y));
+                    for (size_t i = 0; i < 2; ++i) {
+                        const double offset = (i == 0 ? -0.5 : 0.5) * glyph_width;
+                        append_acps(std::lround(x + offset), std::lround(y));
+                        const auto& encoded = encoded_runs.at(encoded_run_index++);
+                        output_.insert(output_.end(), encoded.begin(), encoded.end());
+                    }
+                    continue;
+                }
+                for (const auto& character : characters) {
+                    y += step;
+                    const double dx = character.small_kana ? glyph_width / 8 : 0.0;
+                    const double dy = character.small_kana ? -glyph_height / 8 : 0.0;
+                    append_acps(std::lround(x + dx), std::lround(y + dy));
                     const auto& encoded = encoded_runs.at(encoded_run_index++);
                     output_.insert(output_.end(), encoded.begin(), encoded.end());
                 }

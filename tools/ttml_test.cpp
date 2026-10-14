@@ -403,6 +403,52 @@ int main() {
         }
     }
 
+    // In vertical text two half-width characters share a cell side by side
+    // (tate-chu-yoko) and small kana move to the upper right of their cell.
+    std::printf("13. tate-chu-yoko and small kana\n");
+    {
+        // The ACPS positions in the order they are sent.
+        const auto positions = [](const std::vector<uint8_t>& data) {
+            std::vector<std::pair<int, int>> result;
+            for (size_t i = 0; i < data.size(); ++i) {
+                if (data[i] != 0x9B) continue;
+                int x = 0, y = 0;
+                size_t j = i + 1;
+                while (j < data.size() && data[j] >= '0' && data[j] <= '9') x = x * 10 + (data[j++] - '0');
+                if (j >= data.size() || data[j++] != ';') continue;
+                while (j < data.size() && data[j] >= '0' && data[j] <= '9') y = y * 10 + (data[j++] - '0');
+                if (j + 1 < data.size() && data[j] == ' ' && data[j + 1] == 'a') result.emplace_back(x, y);
+            }
+            return result;
+        };
+        const auto doc = [](const std::string& spans) {
+            return run(
+                "<tt xmlns='http://www.w3.org/ns/ttml' xmlns:tts='http://www.w3.org/ns/ttml#styling'><head><styling>"
+                "<style xml:id='base' tts:fontSize='144px 144px'/>"
+                "<style xml:id='half' tts:fontSize='72px 144px'/>"
+                "</styling><layout><region xml:id='v' tts:origin='3000px 200px' tts:extent='600px 1600px'"
+                " tts:writingMode='tbrl'/></layout></head><body><div><p region='v'>" + spans +
+                "</p></div></body></tt>");
+        };
+        // "12" then a full-width character below it.
+        auto tcy = doc("<span style='half'>12</span><span style='base'>\xE6\x97\xA5</span>");
+        if (tcy) {
+            auto conv = convert(*tcy);
+            const auto p = positions(conv.outputs.empty() ? std::vector<uint8_t>{} : conv.outputs.front().data);
+            check(p.size() == 3 && p[0].second == p[1].second && p[1].first - p[0].first == 18,
+                  "two half-width characters share one cell side by side");
+            check(p.size() == 3 && p[2].second == p[0].second + 36, "the next character goes below them");
+        }
+        // Full-width "a" then small "tsu": the small kana moves right and up.
+        auto kana = doc("<span style='base'>\xE3\x81\x82\xE3\x81\xA3</span>");
+        if (kana) {
+            auto conv = convert(*kana);
+            const auto p = positions(conv.outputs.empty() ? std::vector<uint8_t>{} : conv.outputs.front().data);
+            check(p.size() == 2 && p[1].first > p[0].first && p[1].second < p[0].second + 36,
+                  "a small kana sits in the upper right of its cell");
+        }
+    }
+
     std::printf("\n%s (%d failure(s))\n", failures ? "FAILED" : "ALL PASS", failures);
     return failures ? 1 : 0;
 }
