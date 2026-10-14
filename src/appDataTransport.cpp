@@ -51,6 +51,7 @@ void putBe32(std::vector<uint8_t>& out, uint32_t v) {
 
 void AppDataTransport::onMpt(uint16_t serviceId, const Mpt& mpt) {
     std::erase_if(packetIdToService, [&](const auto& entry) { return entry.second == serviceId; });
+    std::erase_if(packetIdToEmtTag, [&](const auto& entry) { return !packetIdToService.contains(entry.first); });
     applicationServices.erase(serviceId);
 
     auto route = [&](const MmtGeneralLocationInfo& locationInfo) {
@@ -71,6 +72,9 @@ void AppDataTransport::onMpt(uint16_t serviceId, const Mpt& mpt) {
         }
         for (const auto& emt : applicationService->emts) {
             route(emt.locationInfo);
+            if (emt.locationInfo.locationType == 0) {
+                packetIdToEmtTag[emt.locationInfo.packetId] = emt.emtTag;
+            }
         }
     }
 
@@ -107,6 +111,23 @@ void AppDataTransport::onTableSection(uint16_t packetId, const uint8_t* data, si
 
     const uint64_t key = mix(mix(hashBytes(data, size), size), *serviceId);
     if (!shouldSend(key, now90k, kTableResendInterval90k)) {
+        return;
+    }
+
+    // An EMT on its own does not say which EMT it is; applications select
+    // event messages by that tag (event_message_tag), which only the MPT
+    // carries. Send EMTs wrapped with their tag instead.
+    if (data[0] == kEmtTableId) {
+        auto tag = packetIdToEmtTag.find(packetId);
+        if (tag == packetIdToEmtTag.end()) {
+            unroutedCount++;
+            return;
+        }
+        const std::vector<uint8_t> header = { tag->second };
+        const std::vector<uint8_t> emt(data, data + size);
+        for (const auto& section : buildSections(kTaggedEmtTableId, header, emt, emtSequence++)) {
+            sectionCallback(*serviceId, section.data(), section.size());
+        }
         return;
     }
     sectionCallback(*serviceId, data, size);
@@ -246,6 +267,7 @@ bool AppDataTransport::shouldSend(uint64_t key, uint64_t now90k, uint64_t interv
 
 void AppDataTransport::clear() {
     packetIdToService.clear();
+    packetIdToEmtTag.clear();
     applicationServices.clear();
     lastSent.clear();
     assembler.clear();
