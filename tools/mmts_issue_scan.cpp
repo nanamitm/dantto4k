@@ -12,10 +12,15 @@
 //
 // Build (x64 Native Tools Command Prompt, from this directory):
 //
-//   cl /nologo /O2 /EHsc /std:c++20 /DWIN32 /DWIN32_LEAN_AND_MEAN ^
+//   cl /nologo /O2 /EHsc /std:c++20 /utf-8 /DWIN32 /DWIN32_LEAN_AND_MEAN ^
 //      /D_CRT_SECURE_NO_WARNINGS /I..\src ^
 //      /I..\thirdparty\asio\asio\include ^
-//      mmts_issue_scan.cpp @sources.rsp /Fe:mmts_issue_scan.exe /link winscard.lib
+//      mmts_issue_scan.cpp @sources.rsp /Fe:mmts_issue_scan.exe ^
+//      /link winscard.lib gdi32.lib user32.lib ^
+//      /MANIFEST:EMBED /MANIFESTINPUT:..\msvc\utf8.manifest
+//
+// The manifest makes UTF-8 the process code page, so a capture whose name has
+// a character outside CP932 can be opened.
 //
 // Exits 0 when nothing fired, 1 when at least one check did, 2 on a usage or
 // input error - so it can gate an "is this capture interesting?" step.
@@ -746,7 +751,28 @@ private:
 
 } // namespace
 
+// Samples and paths are UTF-8; the console shows them as such while this runs
+// and gets its own code page back afterwards.
+class ConsoleUtf8 {
+public:
+    ConsoleUtf8() : previous_(GetConsoleOutputCP()) {
+        if (previous_ != 0) {
+            SetConsoleOutputCP(CP_UTF8);
+        }
+    }
+    ~ConsoleUtf8() {
+        if (previous_ != 0) {
+            SetConsoleOutputCP(previous_);
+        }
+    }
+    ConsoleUtf8(const ConsoleUtf8&) = delete;
+    ConsoleUtf8& operator=(const ConsoleUtf8&) = delete;
+private:
+    UINT previous_;
+};
+
 int main(int argc, char* argv[]) {
+    ConsoleUtf8 consoleUtf8;
     const char* path = nullptr;
     bool descrambled = false;
     std::string reader;
