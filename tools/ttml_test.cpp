@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <string>
+#include <string_view>
 #include <vector>
 
 using namespace arib::ttml;
@@ -361,6 +362,44 @@ int main() {
             // 16px at 3840 is 4 on the 960 plane; MSZ halves it, so SHS carries 8.
             check(contains(data, { 0x9B, '8', 0x20, 0x58 }), "SHS is doubled for MSZ");
             check(contains(data, { 0x89 }), "MSZ is used");
+        }
+    }
+
+    // tts:writingMode="tbrl": every character is placed with ACPS, columns
+    // from the right edge of the region, and punctuation takes its vertical
+    // form (drawn as DRCS).
+    std::printf("12. vertical writing\n");
+    {
+        const auto contains = [](const std::vector<uint8_t>& data, std::string_view needle) {
+            return std::search(data.begin(), data.end(), needle.begin(), needle.end(),
+                       [](uint8_t a, char b) { return a == static_cast<uint8_t>(b); }) != data.end();
+        };
+        const auto doc = [](const std::string& text) {
+            return run(
+                "<tt xmlns='http://www.w3.org/ns/ttml' xmlns:tts='http://www.w3.org/ns/ttml#styling'><head><styling>"
+                "<style xml:id='base' tts:fontSize='144px 144px'/>"
+                "</styling><layout><region xml:id='v' tts:origin='3000px 200px' tts:extent='600px 1600px'"
+                " tts:writingMode='tbrl'/></layout></head><body><div><p region='v'><span style='base'>" +
+                text + "</span></p></div></body></tt>");
+        };
+        auto two = doc("\xE3\x81\x82\xE3\x81\x84<br/>\xE3\x81\x86");
+        check(two.has_value(), "document parses");
+        if (two) {
+            auto conv = convert(*two);
+            const auto& data = conv.outputs.empty() ? std::vector<uint8_t>{} : conv.outputs.front().data;
+            // Region right edge 3600px -> 900, top 200px -> 50 on the 960 plane;
+            // a column is 144px * 1.2 = 43.2 wide and a cell 36 high.
+            check(contains(data, "\x9B" "860;86 a") && contains(data, "\x9B" "860;122 a"),
+                  "first column goes down from the top right (ACPS 860;86, 860;122)");
+            check(contains(data, "\x9B" "817;86 a"), "second column is to its left (ACPS 817;86)");
+            check(contains(data, "\x9B" "0 X") && contains(data, "\x9B" "0 Y"), "SHS and SVS are 0");
+            check(!contains(data, "\x1C"), "no APS");
+        }
+        auto bracket = doc("\xE3\x80\x8C\xE3\x81\x82\xE3\x80\x8D");
+        if (bracket) {
+            auto conv = convert(*bracket);
+            check(!conv.outputs.empty() && !conv.outputs.front().drcs.empty(),
+                  "brackets take their vertical forms as DRCS");
         }
     }
 

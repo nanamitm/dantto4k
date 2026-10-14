@@ -106,6 +106,105 @@ std::vector<std::string> split_by_null(std::string_view data) {
     return output;
 }
 
+// Vertical writing (tts:writingMode="tbrl") is laid out in the horizontal
+// writing format with every character placed on its own (ACPS), top to bottom
+// and right to left, since caption renderers do not lay out the vertical
+// writing format of ARIB STD-B24. That needs a region to place the columns in.
+bool is_vertical(const RegionBlock& block) {
+    const auto& style = block.region->style;
+    return style.writing_mode == StyleWritingModeValue::Tbrl && style.origin && style.extent;
+}
+
+// Punctuation drawn differently in vertical text, as its vertical presentation
+// form (Unicode Vertical Forms and CJK Compatibility Forms). These have no
+// caption code, so they are drawn from the font as DRCS.
+uint32_t vertical_form(uint32_t cp) {
+    switch (cp) {
+    case 0xFF0C: return 0xFE10; // FULLWIDTH COMMA
+    case 0x3001: return 0xFE11; // IDEOGRAPHIC COMMA
+    case 0x3002: return 0xFE12; // IDEOGRAPHIC FULL STOP
+    case 0xFF1A: return 0xFE13; // FULLWIDTH COLON
+    case 0xFF1B: return 0xFE14; // FULLWIDTH SEMICOLON
+    case 0x3016: return 0xFE17; // LEFT WHITE LENTICULAR BRACKET
+    case 0x3017: return 0xFE18; // RIGHT WHITE LENTICULAR BRACKET
+    case 0x2026: return 0xFE19; // HORIZONTAL ELLIPSIS
+    case 0x2025: return 0xFE30; // TWO DOT LEADER
+    case 0x30FC: return 0xFE31; // PROLONGED SOUND MARK
+    case 0x2014: return 0xFE31; // EM DASH
+    case 0x2015: return 0xFE31; // HORIZONTAL BAR
+    case 0x2013: return 0xFE32; // EN DASH
+    case 0xFF3F: return 0xFE33; // FULLWIDTH LOW LINE
+    case 0xFF08: return 0xFE35; // FULLWIDTH LEFT PARENTHESIS
+    case 0xFF09: return 0xFE36; // FULLWIDTH RIGHT PARENTHESIS
+    case 0xFF5B: return 0xFE37; // FULLWIDTH LEFT CURLY BRACKET
+    case 0xFF5D: return 0xFE38; // FULLWIDTH RIGHT CURLY BRACKET
+    case 0x3014: return 0xFE39; // LEFT TORTOISE SHELL BRACKET
+    case 0x3015: return 0xFE3A; // RIGHT TORTOISE SHELL BRACKET
+    case 0x3010: return 0xFE3B; // LEFT BLACK LENTICULAR BRACKET
+    case 0x3011: return 0xFE3C; // RIGHT BLACK LENTICULAR BRACKET
+    case 0x300A: return 0xFE3D; // LEFT DOUBLE ANGLE BRACKET
+    case 0x300B: return 0xFE3E; // RIGHT DOUBLE ANGLE BRACKET
+    case 0x3008: return 0xFE3F; // LEFT ANGLE BRACKET
+    case 0x3009: return 0xFE40; // RIGHT ANGLE BRACKET
+    case 0x300C: return 0xFE41; // LEFT CORNER BRACKET
+    case 0x300D: return 0xFE42; // RIGHT CORNER BRACKET
+    case 0x300E: return 0xFE43; // LEFT WHITE CORNER BRACKET
+    case 0x300F: return 0xFE44; // RIGHT WHITE CORNER BRACKET
+    case 0xFF3B: return 0xFE47; // FULLWIDTH LEFT SQUARE BRACKET
+    case 0xFF3D: return 0xFE48; // FULLWIDTH RIGHT SQUARE BRACKET
+    case 0xFF5E: return 0x2240; // FULLWIDTH TILDE (no vertical form; a wave standing upright)
+    case 0x301C: return 0x2240; // WAVE DASH
+    case 0xFF0D: return 0xFF5C; // FULLWIDTH HYPHEN-MINUS
+    case 0xFF1D: return 0x2016; // FULLWIDTH EQUALS SIGN
+    default: return cp;
+    }
+}
+
+void append_utf8(std::string& out, uint32_t cp) {
+    if (cp < 0x80) {
+        out.push_back(static_cast<char>(cp));
+    }
+    else if (cp < 0x800) {
+        out.push_back(static_cast<char>(0xC0 | (cp >> 6)));
+        out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+    }
+    else if (cp < 0x10000) {
+        out.push_back(static_cast<char>(0xE0 | (cp >> 12)));
+        out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+        out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+    }
+    else {
+        out.push_back(static_cast<char>(0xF0 | (cp >> 18)));
+        out.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
+        out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+        out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+    }
+}
+
+// The characters of a run of vertical text, each in its vertical form. A
+// malformed byte is kept as it is, as the horizontal path would.
+std::vector<std::string> vertical_characters(std::string_view text) {
+    std::vector<std::string> characters;
+    for (size_t i = 0; i < text.size();) {
+        const auto lead = static_cast<uint8_t>(text[i]);
+        const size_t length = lead < 0x80 ? 1 : (lead >> 5) == 0x6 ? 2 : (lead >> 4) == 0xE ? 3 : (lead >> 3) == 0x1E ? 4 : 1;
+        if (i + length > text.size() || length == 1) {
+            characters.emplace_back(text.substr(i, 1));
+            ++i;
+            continue;
+        }
+        uint32_t cp = lead & (0xFF >> (length + 1));
+        for (size_t k = 1; k < length; ++k) {
+            cp = (cp << 6) | (static_cast<uint8_t>(text[i + k]) & 0x3F);
+        }
+        std::string character;
+        append_utf8(character, vertical_form(cp));
+        characters.push_back(std::move(character));
+        i += length;
+    }
+    return characters;
+}
+
 bool span_has_text(const resolved::Span& span) {
     return std::ranges::any_of(span.content, [](const auto& content) {
         const auto* text = std::get_if<std::string>(&content);
@@ -453,10 +552,20 @@ private:
         return actions;
     }
 
+    // One encoded chunk per run, or per character in vertical text, which
+    // places every character on its own.
     static void collect_text(const Page& page, std::string& output) {
         for (const auto& block : page.blocks) {
+            const bool vertical = is_vertical(block);
             for (const auto& line : block.lines) {
                 for (const auto& run : line.runs) {
+                    if (vertical) {
+                        for (const auto& character : vertical_characters(run.text)) {
+                            output.append(character);
+                            output.push_back('\0');
+                        }
+                        continue;
+                    }
                     output.append(run.text);
                     output.push_back('\0');
                 }
@@ -497,6 +606,10 @@ private:
 
     void encode_page(const Page& page, const std::vector<std::string>& encoded_runs, size_t& encoded_run_index) {
         for (const auto& block : page.blocks) {
+            if (is_vertical(block)) {
+                encode_vertical_block(block, encoded_runs, encoded_run_index);
+                continue;
+            }
             if (block.region->style.extent) {
                 append_extent(*block.region->style.extent);
             }
@@ -533,68 +646,7 @@ private:
                         set_line_spacing(spacing);
                     }
 
-                    if (style.font_size) {
-                        const double font_width = style.font_size->x;
-                        const double font_height = style.font_size->y;
-                        uint32_t composition_width = static_cast<uint32_t>(std::round(144 * layoutScale_));
-                        uint32_t composition_height = static_cast<uint32_t>(std::round(144 * layoutScale_));
-						uint8_t character_size = B24ControlSet::NSZ;
-                        if (font_width == 72 && font_height == 144) {
-                            character_size = B24ControlSet::MSZ;
-                        }
-                        else if (font_width == 72 && font_height == 72) {
-                            character_size = B24ControlSet::SSZ;
-                        }
-                        else {
-                            composition_width = static_cast<uint32_t>(std::max(1.0, std::round(font_width * layoutScale_)));
-                            composition_height = static_cast<uint32_t>(std::max(1.0, std::round(font_height * layoutScale_)));
-						}
-                        set_character_composition(composition_width, composition_height);
-                        set_character_size(character_size);
-                    }
-
-                    if (!style.text_outline || std::holds_alternative<None>(*style.text_outline)) {
-                        set_ornament_off();
-                    }
-                    else {
-                        const auto& text_outline = std::get<TextOutline>(*style.text_outline);
-                        const auto color = text_outline.color.value_or(
-                            style.color.value_or(StyleColorValue{ { 255, 255, 255, 255 } }));
-                        const auto [palette, index] = findClosestColor(ColorRGBA{
-                            color.r(), color.g(), color.b(), color.a()});
-                        set_ornament(palette, index);
-                    }
-
-                    if (style.color) {
-                        set_text_color(*style.color);
-                    }
-
-                    if (style.background_color) {
-                        set_background_color(*style.background_color);
-                    }
-
-                    const bool underline = style.text_decoration == StyleTextDecorationValue::Underline;
-                    set_underline(underline);
-
-                    // HLC: bit 0 bottom, 1 right, 2 top, 3 left.
-                    uint8_t enclosure = 0;
-                    if (style.border_bottom.value_or(false)) enclosure |= 0x01;
-                    if (style.border_right.value_or(false)) enclosure |= 0x02;
-                    if (style.border_top.value_or(false)) enclosure |= 0x04;
-                    if (style.border_left.value_or(false)) enclosure |= 0x08;
-                    set_enclosure(enclosure);
-
-                    set_flashing(style.flashing.value_or(false));
-
-                    uint8_t font = 0;
-                    if (style.font_weight == StyleFontWeightValue::Bold) {
-                        font |= 0x01;
-                    }
-                    if (style.font_style == StyleFontStyleValue::Italic) {
-                        font |= 0x02;
-                    }
-                    set_font(font);
-
+                    apply_run_style(style);
 
                     if (!aps) {
                         append_aps(0, 0);
@@ -608,6 +660,126 @@ private:
                 }
             }
         }
+    }
+
+    // Vertical text: lines are columns from the right edge of the region and
+    // characters go down them. Each character is placed with ACPS, whose
+    // position is the lower left of its character cell; SHS is 0 so the cell
+    // is as wide as the glyph, and SVS is the letter spacing so the cell is
+    // as tall as one step down the column.
+    void encode_vertical_block(const RegionBlock& block, const std::vector<std::string>& encoded_runs, size_t& encoded_run_index) {
+        const auto& origin = *block.region->style.origin;
+        const auto& extent = *block.region->style.extent;
+        append_extent(extent);
+        append_origin(origin);
+
+        const double top = origin.y * layoutScale_;
+        double column_right = (origin.x + extent.x) * layoutScale_;
+        for (const auto& line : block.lines) {
+            // The column is as wide as the widest line height on it.
+            double column_width = 0;
+            for (const auto& run : line.runs) {
+                const auto& style = *run.style;
+                const double font_width = style.font_size ? style.font_size->x : 144.0;
+                double width = font_width * 1.2;
+                if (style.line_height && !std::holds_alternative<NormalLineHeight>(*style.line_height)) {
+                    width = std::get<double>(*style.line_height);
+                }
+                column_width = std::max(column_width, width * layoutScale_);
+            }
+            const double column_left = column_right - column_width;
+
+            double y = top;
+            for (const auto& run : line.runs) {
+                const auto& style = *run.style;
+                apply_run_style(style);
+                const bool small_size = character_size_ == B24ControlSet::SSZ;
+                const bool half_width = small_size || character_size_ == B24ControlSet::MSZ;
+                const double horizontal_scale = half_width ? 0.5 : 1.0;
+                const double vertical_scale = small_size ? 0.5 : 1.0;
+                const double letter_spacing = style.letter_spacing ? std::max(0.0, *style.letter_spacing * layoutScale_) : 0.0;
+                set_character_spacing(0);
+                set_line_spacing(static_cast<uint32_t>(std::round(letter_spacing / vertical_scale)));
+
+                const double glyph_width = character_composition_width_ * horizontal_scale;
+                const double step = (character_composition_height_ + line_spacing_) * vertical_scale;
+                const long x = std::lround(column_left + (column_width - glyph_width) / 2);
+                const size_t count = vertical_characters(run.text).size();
+                for (size_t i = 0; i < count; ++i) {
+                    y += step;
+                    append_acps(x, std::lround(y));
+                    const auto& encoded = encoded_runs.at(encoded_run_index++);
+                    output_.insert(output_.end(), encoded.begin(), encoded.end());
+                }
+            }
+            column_right = column_left;
+        }
+    }
+
+    // The character size and decoration of a run, the same in both writing
+    // directions.
+    void apply_run_style(const StyleProperties& style) {
+        if (style.font_size) {
+            const double font_width = style.font_size->x;
+            const double font_height = style.font_size->y;
+            uint32_t composition_width = static_cast<uint32_t>(std::round(144 * layoutScale_));
+            uint32_t composition_height = static_cast<uint32_t>(std::round(144 * layoutScale_));
+            uint8_t character_size = B24ControlSet::NSZ;
+            if (font_width == 72 && font_height == 144) {
+                character_size = B24ControlSet::MSZ;
+            }
+            else if (font_width == 72 && font_height == 72) {
+                character_size = B24ControlSet::SSZ;
+            }
+            else {
+                composition_width = static_cast<uint32_t>(std::max(1.0, std::round(font_width * layoutScale_)));
+                composition_height = static_cast<uint32_t>(std::max(1.0, std::round(font_height * layoutScale_)));
+            }
+            set_character_composition(composition_width, composition_height);
+            set_character_size(character_size);
+        }
+
+        if (!style.text_outline || std::holds_alternative<None>(*style.text_outline)) {
+            set_ornament_off();
+        }
+        else {
+            const auto& text_outline = std::get<TextOutline>(*style.text_outline);
+            const auto color = text_outline.color.value_or(
+                style.color.value_or(StyleColorValue{ { 255, 255, 255, 255 } }));
+            const auto [palette, index] = findClosestColor(ColorRGBA{
+                color.r(), color.g(), color.b(), color.a()});
+            set_ornament(palette, index);
+        }
+
+        if (style.color) {
+            set_text_color(*style.color);
+        }
+
+        if (style.background_color) {
+            set_background_color(*style.background_color);
+        }
+
+        const bool underline = style.text_decoration == StyleTextDecorationValue::Underline;
+        set_underline(underline);
+
+        // HLC: bit 0 bottom, 1 right, 2 top, 3 left.
+        uint8_t enclosure = 0;
+        if (style.border_bottom.value_or(false)) enclosure |= 0x01;
+        if (style.border_right.value_or(false)) enclosure |= 0x02;
+        if (style.border_top.value_or(false)) enclosure |= 0x04;
+        if (style.border_left.value_or(false)) enclosure |= 0x08;
+        set_enclosure(enclosure);
+
+        set_flashing(style.flashing.value_or(false));
+
+        uint8_t font = 0;
+        if (style.font_weight == StyleFontWeightValue::Bold) {
+            font |= 0x01;
+        }
+        if (style.font_style == StyleFontStyleValue::Italic) {
+            font |= 0x02;
+        }
+        set_font(font);
     }
 
     void reset_state() {
@@ -667,6 +839,15 @@ private:
         append_number(static_cast<int>(std::lround(origin.y * layoutScale_)));
         output_.push_back(B24ControlSet::SP);
         output_.push_back(B24ControlSet::SDP);
+    }
+
+    void append_acps(long x, long y) {
+        output_.push_back(B24ControlSet::CSI);
+        append_number(static_cast<int>(x));
+        output_.push_back(0x3B);
+        append_number(static_cast<int>(y));
+        output_.push_back(B24ControlSet::SP);
+        output_.push_back(B24ControlSet::ACPS);
     }
 
     void append_aps(uint8_t row, uint8_t column) {

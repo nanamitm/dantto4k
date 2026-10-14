@@ -177,11 +177,15 @@ DrcsPattern rasterize_font_glyph(uint32_t codepoint, uint8_t width, uint8_t heig
     }
 
     // Centre what was actually drawn rather than the font's line box, whose
-    // ascent and descent leave the glyph sitting high in the cell.
+    // ascent and descent leave the glyph sitting high in the cell. Vertical
+    // presentation forms keep their place: the ideographic comma and full stop
+    // belong at the upper right.
+    const bool verticalForm = (codepoint >= 0xFE10 && codepoint <= 0xFE19) ||
+                              (codepoint >= 0xFE30 && codepoint <= 0xFE4F);
     std::vector<uint8_t> bits((static_cast<size_t>(width) * height + 7) / 8, 0);
     if (lit > 0) {
-        const int shiftX = (width - 1 - maxX - minX) / 2;
-        const int shiftY = (height - 1 - maxY - minY) / 2;
+        const int shiftX = verticalForm ? 0 : (width - 1 - maxX - minX) / 2;
+        const int shiftY = verticalForm ? 0 : (height - 1 - maxY - minY) / 2;
         for (int y = 0; y < height; ++y) {
             for (int x = 0; x < width; ++x) {
                 if (!ink[static_cast<size_t>(y) * width + x]) {
