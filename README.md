@@ -76,7 +76,7 @@ dantto4k --frontend-descrambled --dump-app-data appdata input.mmts
 
 MPEG-2 TS に変換するとき、データ放送 (ARIB STD-B62) を TS のプライベートセクションとして出力します。dantto4k と BonDriver_dantto4k.dll の両方が対象です。
 データ放送のあるサービスでは、PMT に stream_type 0x05、registration_descriptor `'D4KA'` の ES が PMT の PID - 0x100 の PID で追加されます。
-MH-AIT・DDMT・DAMT・DCCT・EMT はそのまま、アプリケーションのファイルは組み立てたアイテム単位 (table_id 0xC0) で送られます。
+MH-AIT・DDMT・DAMT・DCCT・EMT はそのまま、アプリケーションのファイルは組み立てたアイテム単位 (table_id 0xC0) で、アプリケーションが自分で表示するための字幕 (ARIB-TTML) は PTS 付きで (table_id 0xC1) 送られます。
 内容が変わらないものは間引き、アイテムは既定で 10 秒ごとに再送します。形式の詳細は [docs/app-data-ts-transport.md](docs/app-data-ts-transport.md) を参照してください。
 
 出力しない場合は `--no-app-data` を指定するか、ini の `[appdata]` で `enable=false` にします。

@@ -101,6 +101,8 @@ private:
 		std::optional<uint64_t> pts = std::nullopt);
 	void writeCaptionManagementData(uint64_t pts);
 	void writeAppDataSection(uint16_t serviceId, const uint8_t* data, size_t size);
+	void forwardCaptionToApplication(const MmtTlv::MmtStream& mmtStream, const MmtTlv::MfuData& mfuData,
+		const MmtTlv::AdditionalAribSubtitleInfo& subtitleInfo);
 	// PID that carries a service's data broadcasting: just below its PMT PID.
 	static uint16_t appDataPid(uint16_t pmtPid) { return static_cast<uint16_t>(pmtPid - 0x100); }
 	uint64_t appDataClock90k() const { return lastPcr / 300; }

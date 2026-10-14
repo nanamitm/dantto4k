@@ -218,6 +218,8 @@ void RemuxerHandler::onSubtitleData(const MmtTlv::MmtStream& mmtStream, const st
         return;
     }
 
+    forwardCaptionToApplication(mmtStream, mfuData, *subtitleInfo);
+
     std::string ttml(mfuData.data.begin(), mfuData.data.end());
     const uint32_t streamIndex = mmtStream.getStreamIndex();
     subtitleDebugLog("subtitle mfu stream=" + std::to_string(streamIndex) +
@@ -349,6 +351,34 @@ void RemuxerHandler::convertAndWriteSubtitle(const MmtTlv::MmtStream& mmtStream,
         }
         writeSubtitle(mmtStream, pesData, pts);
     }
+}
+
+// Data broadcasting applications read captions themselves (addCaptionListener),
+// so the ARIB-TTML documents and their resources go to the app data PID as they
+// are. A document carries the PTS its time zero maps to, chosen like the B24
+// conversion does; resources are used as soon as they arrive.
+void RemuxerHandler::forwardCaptionToApplication(const MmtTlv::MmtStream& mmtStream, const MmtTlv::MfuData& mfuData,
+    const MmtTlv::AdditionalAribSubtitleInfo& subtitleInfo) {
+    if (!config.appDataTransport) {
+        return;
+    }
+    std::optional<uint64_t> pts;
+    if (mfuData.subtitleDataType == 0) {
+        const uint64_t clockPts = lastPcr / 300;
+        auto base = subtitleInfo.tmd == 0b1111 ? std::nullopt : subtitleBasePts(subtitleInfo);
+        if (base && clockPts != 0 && *base > clockPts + kMaxSubtitleLead90k) {
+            base = clockPts;
+        }
+        if (!base && clockPts != 0) {
+            base = clockPts;
+        }
+        if (base && ptsOffset90k != 0) {
+            base = *base > static_cast<uint64_t>(ptsOffset90k) ? *base - ptsOffset90k : 0;
+        }
+        pts = base;
+    }
+    appDataTransport.onCaption(mmtStream.getPacketId(), mmtStream.getComponentTag(),
+        mfuData.subtitleDataType, subtitleInfo.tmd, pts, mfuData.data);
 }
 
 // The PTS that TTML time zero maps to, or nullopt when the stream signalled no

@@ -74,6 +74,32 @@ CRC_32                       32
 - 同じ (component_tag, mpu_sequence_number, item_id) で内容が同じアイテムは、既定で 10 秒に 1 回だけ送る。
   内容が変わったらすぐに送る。時間は PCR (ストリーム時刻) で計るので、ファイル変換でも結果が毎回同じになる。
 
+### 3. 字幕 (table_id = 0xC1、dantto4k 独自)
+
+データ放送のアプリケーションは、`addCaptionListener` で字幕を自分で受け取って表示する
+(NHK BSP4K の字幕ページなど)。そのため、アプリケーションサービス記述子のあるサービスでは、
+字幕 (stpp アセット) の MFU も変換せずにそのまま送る。分割の仕方はアイテムと同じ。
+
+```
+-- 先頭セクション (section_number == 0) のみ --
+component_tag                16   0x30〜0x37 字幕、0x38〜0x3F 文字スーパー
+data_type                     8   字幕 MFU の data_type (0: ARIB-TTML 文書、それ以外はリソース。6 は SVG フォント)
+tmd                           8   追加字幕情報の TMD (下位 4 ビット)
+pts_flag                      8   0x80: pts が有効
+reserved                      7
+pts                          33   文書の時刻 0 を提示する PTS (TS の時間軸)
+data_size                    32
+-- 全セクション --
+data_byte                     N   TTML 文書またはリソース (放送のまま)
+```
+
+- PTS は B24 への変換と同じ規則で決める。TMD が 0010 で reference_start_time があればそれを使い、
+  PCR より 30 秒以上先なら壊れているとみなして PCR にする。それ以外は受け取った時点の PCR。
+  `setPtsOffset` のずらしも同じように掛ける。
+- 受信側は、PTS に TTML の最初の begin を足した時刻にアプリケーションへ渡す。過ぎていればすぐに渡す。
+- リソース (data_type が 0 以外) には PTS を付けず、受け取ったらすぐに渡す。
+- 字幕は繰り返し送られないので、間引きはしない。
+
 ## 受信側 (TVTDataBroadcastingWV2) の処理
 
 1. PMT から stream_type 0x05 かつ format_identifier `'D4KA'` の ES を探し、その PID のセクションを集める。

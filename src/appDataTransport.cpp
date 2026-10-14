@@ -10,9 +10,6 @@ namespace MmtTlv {
 
 namespace {
 
-// Size of component_tag, mpu_sequence_number, item_id and item_size at the
-// start of the first item section.
-constexpr size_t kItemHeaderSize = 2 + 4 + 4 + 4;
 // table_id .. last_section_number, and CRC_32.
 constexpr size_t kSectionOverhead = 8 + 4;
 constexpr size_t kMaxSectionPayload = AppDataTransport::kMaxSectionSize - kSectionOverhead;
@@ -77,8 +74,10 @@ void AppDataTransport::onMpt(uint16_t serviceId, const Mpt& mpt) {
         }
     }
 
+    // Applications get the service's captions as well (addCaptionListener).
     for (const auto& asset : mpt.assets) {
-        if (asset.assetType != static_cast<uint32_t>(AssetType::aapp)) {
+        if (asset.assetType != static_cast<uint32_t>(AssetType::aapp) &&
+            asset.assetType != static_cast<uint32_t>(AssetType::stpp)) {
             continue;
         }
         for (const auto& locationInfo : asset.locationInfos) {
@@ -144,8 +143,50 @@ void AppDataTransport::onApplicationData(const MmtStream& mmtStream, const Mpu& 
     }
 }
 
+void AppDataTransport::onCaption(uint16_t packetId, int32_t componentTag, uint8_t dataType, uint8_t tmd, std::optional<uint64_t> pts90k, const std::vector<uint8_t>& data) {
+    if (!sectionCallback) {
+        return;
+    }
+    const uint16_t* serviceId = findService(packetId);
+    if (!serviceId || !hasApplicationService(*serviceId)) {
+        unroutedCount++;
+        return;
+    }
+    const auto sections = buildCaptionSections(componentTag, dataType, tmd, pts90k, data, captionSequence);
+    if (sections.empty()) {
+        oversizedItemCount++;
+        return;
+    }
+    captionSequence++;
+    for (const auto& section : sections) {
+        sectionCallback(*serviceId, section.data(), section.size());
+    }
+}
+
 std::vector<std::vector<uint8_t>> AppDataTransport::buildItemSections(const AppItemAssembler::Item& item, uint16_t sequence) {
-    const size_t total = kItemHeaderSize + item.data.size();
+    std::vector<uint8_t> header;
+    putBe16(header, static_cast<uint16_t>(item.componentTag));
+    putBe32(header, item.mpuSequenceNumber);
+    putBe32(header, item.itemId);
+    putBe32(header, static_cast<uint32_t>(item.data.size()));
+    return buildSections(kItemTableId, header, item.data, sequence);
+}
+
+std::vector<std::vector<uint8_t>> AppDataTransport::buildCaptionSections(int32_t componentTag, uint8_t dataType, uint8_t tmd, std::optional<uint64_t> pts90k, const std::vector<uint8_t>& data, uint16_t sequence) {
+    std::vector<uint8_t> header;
+    putBe16(header, static_cast<uint16_t>(componentTag));
+    header.push_back(dataType);
+    header.push_back(tmd);
+    header.push_back(pts90k ? 0x80 : 0x00);
+    const uint64_t pts = pts90k.value_or(0) & 0x1FFFFFFFFULL;
+    header.push_back(static_cast<uint8_t>(pts >> 32));
+    putBe32(header, static_cast<uint32_t>(pts));
+    putBe32(header, static_cast<uint32_t>(data.size()));
+    return buildSections(kCaptionTableId, header, data, sequence);
+}
+
+std::vector<std::vector<uint8_t>> AppDataTransport::buildSections(uint8_t tableId, const std::vector<uint8_t>& header, const std::vector<uint8_t>& data, uint16_t sequence) {
+    const size_t total = header.size() + data.size();
     const size_t sectionCount = std::max<size_t>(1, (total + kMaxSectionPayload - 1) / kMaxSectionPayload);
     if (sectionCount > kMaxSectionsPerItem) {
         return {};
@@ -161,7 +202,7 @@ std::vector<std::vector<uint8_t>> AppDataTransport::buildItemSections(const AppI
         size_t payloadSize = std::min(kMaxSectionPayload, total - number * kMaxSectionPayload);
         const size_t sectionLength = 5 + payloadSize + 4;
 
-        section.push_back(kItemTableId);
+        section.push_back(tableId);
         // section_syntax_indicator, private_indicator, reserved, section_length
         putBe16(section, static_cast<uint16_t>(0xF000 | sectionLength));
         putBe16(section, sequence);
@@ -171,13 +212,10 @@ std::vector<std::vector<uint8_t>> AppDataTransport::buildItemSections(const AppI
         section.push_back(static_cast<uint8_t>(sectionCount - 1));
 
         if (number == 0) {
-            putBe16(section, static_cast<uint16_t>(item.componentTag));
-            putBe32(section, item.mpuSequenceNumber);
-            putBe32(section, item.itemId);
-            putBe32(section, static_cast<uint32_t>(item.data.size()));
-            payloadSize -= kItemHeaderSize;
+            section.insert(section.end(), header.begin(), header.end());
+            payloadSize -= header.size();
         }
-        section.insert(section.end(), item.data.begin() + offset, item.data.begin() + offset + payloadSize);
+        section.insert(section.end(), data.begin() + offset, data.begin() + offset + payloadSize);
         offset += payloadSize;
 
         putBe32(section, crc32Mpeg2(section.data(), section.size()));

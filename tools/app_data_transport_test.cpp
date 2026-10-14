@@ -31,7 +31,8 @@ static const std::vector<uint8_t> kApplicationServiceDescriptor = {
     0x60, 0x00, 0xFE, 0xE2, // EMT
 };
 
-static MmtTlv::Mpt mpt(uint16_t serviceId, bool withApplicationService) {
+static MmtTlv::Mpt mpt(uint16_t serviceId, bool withApplicationService,
+    uint32_t assetType = MmtTlv::AssetType::aapp, uint16_t assetPacketId = 0xF340) {
     MmtTlv::Common::WriteStream out;
     out.put8U(0x20); // MPT
     out.put8U(0); out.putBe16U(0); out.put8U(0);
@@ -43,11 +44,11 @@ static MmtTlv::Mpt mpt(uint16_t serviceId, bool withApplicationService) {
     else {
         out.putBe16U(0);
     }
-    out.put8U(1); // one aapp asset on packet_id 0xF340
+    out.put8U(1); // one asset
     out.put8U(0); out.putBe32U(0); out.put8U(0);
-    out.putBe32U(MmtTlv::AssetType::aapp);
+    out.putBe32U(assetType);
     out.put8U(0); out.put8U(1);
-    out.put8U(0); out.putBe16U(0xF340);
+    out.put8U(0); out.putBe16U(assetPacketId);
     out.putBe16U(0);
 
     auto data = out.getData();
@@ -159,16 +160,47 @@ static void testItemSections() {
     require(MmtTlv::AppDataTransport::buildItemSections(huge, 0).empty(), "item over 256 sections is refused");
 }
 
+static void testCaptionSections() {
+    const std::vector<uint8_t> ttml = { '<', 't', 't', '/', '>' };
+    const uint64_t pts = 0x1ABCDEF01ULL; // 33 bits
+    auto sections = MmtTlv::AppDataTransport::buildCaptionSections(0x30, 0, 0b0010, pts, ttml, 7);
+    require(sections.size() == 1, "caption fits one section");
+    const auto& s = sections[0];
+    require(s[0] == MmtTlv::AppDataTransport::kCaptionTableId, "caption table_id");
+    require(crc32Mpeg2(s) == 0, "caption CRC_32");
+    require(((s[8] << 8) | s[9]) == 0x30 && s[10] == 0 && s[11] == 0b0010, "component_tag, data_type, tmd");
+    require(s[12] == 0x80, "pts present");
+    const uint64_t got = (uint64_t(s[13]) << 32) | (uint32_t(s[14]) << 24) | (s[15] << 16) | (s[16] << 8) | s[17];
+    require(got == pts, "pts");
+    require(((uint32_t(s[18]) << 24) | (s[19] << 16) | (s[20] << 8) | s[21]) == ttml.size(), "data_size");
+    require(std::equal(ttml.begin(), ttml.end(), s.begin() + 22), "caption payload");
+
+    sections = MmtTlv::AppDataTransport::buildCaptionSections(0x30, 6, 0b1111, std::nullopt, ttml, 8);
+    require(sections[0][12] == 0x00 && sections[0][10] == 6, "resource without pts");
+
+    // Captions follow the stpp asset's packet_id to an application service only.
+    MmtTlv::AppDataTransport transport;
+    int sent = 0;
+    transport.setSectionCallback([&](uint16_t, const uint8_t*, size_t) { sent++; });
+    transport.onMpt(0x0065, mpt(0x0065, true, MmtTlv::AssetType::stpp, 0xF330));
+    transport.onCaption(0xF330, 0x30, 0, 0b0010, pts, ttml);
+    require(sent == 1, "caption of an application service is sent");
+    transport.onMpt(0x0041, mpt(0x0041, false, MmtTlv::AssetType::stpp, 0xF331));
+    transport.onCaption(0xF331, 0x30, 0, 0b0010, pts, ttml);
+    require(sent == 1, "caption of a service without applications is not sent");
+}
+
 int main() {
     try {
         testDescriptor();
         testRoutingAndResend();
         testItemSections();
+        testCaptionSections();
     }
     catch (const std::exception& e) {
         std::fprintf(stderr, "FAIL: %s\n", e.what());
         return 1;
     }
-    std::puts("PASS: application service descriptor, app data routing/resend and item sections");
+    std::puts("PASS: application service descriptor, app data routing/resend, item and caption sections");
     return 0;
 }
