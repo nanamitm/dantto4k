@@ -1,4 +1,4 @@
-﻿#include "dataUnit.h"
+#include "dataUnit.h"
 #include "ecm.h"
 #include "m2SectionMessage.h"
 #include "m2ShortSectionMessage.h"
@@ -937,6 +937,8 @@ void MmtTlvDemuxer::processMpu(Common::ReadStream& stream) {
         return;
     }
 
+    const bool mpuChanged = mmtStream->lastMpuSequenceNumber &&
+        mpu.mpuSequenceNumber != *mmtStream->lastMpuSequenceNumber;
     if (!mmtStream->lastMpuSequenceNumber) {
         mmtStream->lastMpuSequenceNumber = mpu.mpuSequenceNumber;
     }
@@ -967,11 +969,12 @@ void MmtTlvDemuxer::processMpu(Common::ReadStream& stream) {
     auto validator = getFragmentValidator(mmtp.packetId);
     auto assembler = getAssembler(mmtp.packetId);
 
-    if (mpu.mpuSequenceNumber != mmtStream->lastMpuSequenceNumber) {
-        if (mpu.fragmentationIndicator == FragmentationIndicator::NotFragmented) {
-            validator->clear();
-            assembler->clear();
-        }
+    if (mpuChanged) {
+        // Compare against the previous MPU, before updating the sequence.
+        // Incomplete fragments must not poison a new MPU or join its data.
+        validator->clear();
+        assembler->clear();
+        mmtStream->mpuProcessor->clear();
     }
 
     mmtStream->rapFlag = mmtp.rapFlag;
