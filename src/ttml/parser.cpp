@@ -288,6 +288,9 @@ private:
         if (const auto error = parse_region_ref(node, paragraph.region)) {
             return error;
         }
+        if (const auto error = parse_style_refs(node, paragraph.style_refs)) {
+            return error;
+        }
         if (const auto error = parse_style_properties(node, paragraph.style, StyleScope::Content)) {
             return error;
         }
@@ -326,7 +329,7 @@ private:
             }
             if (child_name == "span") {
                 in_anonymous_span = false;
-                const auto error = parse_span(child, paragraph);
+                const auto error = parse_span(child, paragraph, nullptr, 0);
                 if (error) {
                     return error;
                 }
@@ -339,7 +342,16 @@ private:
         return {};
     }
 
-    std::optional<ParseError> parse_span(pugi::xml_node node, ast::Paragraph& paragraph) {
+    // A span may hold text, <br/> and further spans. The paragraph gets a flat
+    // list: the text of a span becomes one span per run between the spans it
+    // holds, and each of those carries the styling of the spans around it.
+    std::optional<ParseError> parse_span(pugi::xml_node node, ast::Paragraph& paragraph,
+                                         const ast::Span* parent, int depth) {
+        // Deeper than any caption needs; it only guards the recursion.
+        constexpr int kMaxSpanDepth = 16;
+        if (depth >= kMaxSpanDepth) {
+            return make_error("span elements nested too deeply", node);
+        }
         ast::Span span;
 
         if (const auto id_attr = node.attribute("xml:id")) {
@@ -366,27 +378,75 @@ private:
             return error;
         }
 
+        if (parent) {
+            span.enclosing = parent->enclosing;
+            span.enclosing.push_back({ parent->style_refs, parent->style });
+            if (!span.region) {
+                span.region = parent->region;
+            }
+            // The times of a span are relative to the span around it.
+            if (parent->timing.begin) {
+                if (span.timing.begin) {
+                    *span.timing.begin += *parent->timing.begin;
+                }
+                if (span.timing.end) {
+                    *span.timing.end += *parent->timing.begin;
+                }
+            }
+            if (!span.timing.begin) {
+                span.timing.begin = parent->timing.begin;
+            }
+            if (!span.timing.end || (parent->timing.end && *parent->timing.end < *span.timing.end)) {
+                span.timing.end = parent->timing.end;
+            }
+        }
+
+        // The run of this span's own content before the next nested span.
+        ast::Span piece = span;
+        bool piece_has_content = false;
+        const auto flush = [&] {
+            if (piece_has_content) {
+                paragraph.spans.push_back(std::move(piece));
+            }
+            piece = span;
+            piece.id.reset();
+            piece_has_content = false;
+        };
+
         for (auto child = node.first_child(); !child.empty(); child = child.next_sibling()) {
             switch (child.type()) {
             case pugi::node_pcdata:
             case pugi::node_cdata:
-                span.content.emplace_back(std::string(child.value()));
+                piece.content.emplace_back(std::string(child.value()));
+                piece_has_content = true;
                 break;
-            case pugi::node_element:
-                if (std::string_view(child.name()) != "br") {
-                    return make_error("span element may only contain text and br elements", child);
+            case pugi::node_element: {
+                const std::string_view child_name = child.name();
+                if (child_name == "span") {
+                    flush();
+                    if (const auto error = parse_span(child, paragraph, &span, depth + 1)) {
+                        return error;
+                    }
+                    break;
+                }
+                if (child_name != "br") {
+                    return make_error("span element may only contain text, br and span elements", child);
                 }
                 if (child.first_child()) {
                     return make_error("br element must be empty", child);
                 }
-                span.content.emplace_back(ast::LineBreak{});
+                piece.content.emplace_back(ast::LineBreak{});
+                piece_has_content = true;
                 break;
+            }
             default:
-                return make_error("span element may only contain text and br elements", child);
+                return make_error("span element may only contain text, br and span elements", child);
             }
         }
-
-        paragraph.spans.push_back(std::move(span));
+        // An empty span still counts as one, as before.
+        if (piece_has_content || node.first_child().empty()) {
+            paragraph.spans.push_back(std::move(piece));
+        }
 
         return {};
     }

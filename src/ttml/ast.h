@@ -32,10 +32,21 @@ struct RegionDefinition {
 struct LineBreak {};
 using SpanContent = std::variant<std::string, LineBreak>;
 
+// The styling of a span that encloses another one: its style references and
+// its own tts:* attributes.
+struct StyleLayer {
+    std::vector<std::string> style_refs;
+    StyleProperties style;
+};
+
 struct Span {
     std::optional<std::string> id;
     Timing timing;
     std::optional<std::string> region;
+    // A span inside another span is flattened into the paragraph; the styling
+    // of the spans around it comes first, outermost first, and its own goes
+    // over that, as inheritance would have it.
+    std::vector<StyleLayer> enclosing;
     std::vector<std::string> style_refs;
     // tts:* attributes written directly on the element. They override
     // whatever the referenced styles set.
@@ -47,6 +58,7 @@ struct Paragraph {
     std::optional<std::string> id;
     Timing timing;
     std::optional<std::string> region;
+    std::vector<std::string> style_refs;
     StyleProperties style;
     std::vector<Span> spans;
 };

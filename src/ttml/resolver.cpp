@@ -204,8 +204,14 @@ public:
             if (resolved_paragraph.region) {
                 resolved_paragraph.style = inherited_style(resolved_paragraph.region->style);
             }
-            // tts:* written on the <p> itself wins over what the region set,
-            // and the spans below inherit the result.
+            // <p style="..."> and then tts:* written on the <p> itself win over
+            // what the region set, and the spans below inherit the result.
+            if (auto error = apply_refs(resolved_paragraph.style, paragraph.style_refs)) {
+                return {
+                    .document = std::nullopt,
+                    .error = std::move(error)
+                };
+            }
             merge_style(resolved_paragraph.style, paragraph.style);
 
             for (const auto& span : paragraph.spans) {
@@ -227,6 +233,18 @@ public:
 
                 if (resolved_span.region) {
                     merge_style(resolved_span.style, inherited_style(resolved_span.region->style));
+                }
+                // The spans this one was nested in, outermost first.
+                for (const auto& layer : span.enclosing) {
+                    StyleProperties enclosing;
+                    if (auto error = apply_refs(enclosing, layer.style_refs)) {
+                        return {
+                            .document = {},
+                            .error = std::move(error)
+                        };
+                    }
+                    merge_style(enclosing, layer.style);
+                    merge_style(resolved_span.style, inherited_style(enclosing));
                 }
                 if (auto error = apply_refs(resolved_span.style, span.style_refs)) {
                     return {
