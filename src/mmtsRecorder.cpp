@@ -1,11 +1,14 @@
 #include "mmtsRecorder.h"
 
 #include "mmtsMapWriter.h"
+#include "filePathSafety.h"
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <vector>
 
 namespace MmtsRecorder {
 namespace {
@@ -23,6 +26,10 @@ struct Session {
 
 std::mutex g_mutex;
 std::map<uint32_t, std::unique_ptr<Session>> g_sessions;
+// Sessions that Stop() is finishing outside g_mutex. They no longer receive
+// data, but their media and map paths stay reserved until the final map write
+// and media close are done. Only path and mapPath are read through these.
+std::vector<const Session*> g_closingSessions;
 uint32_t g_nextSessionId = 1;
 
 uint32_t AllocateSessionId()
@@ -37,6 +44,15 @@ uint32_t AllocateSessionId()
         }
     }
     return 0;
+}
+
+bool PathInUse(const Session& session, const std::filesystem::path& savePath,
+    const std::filesystem::path& mapPath)
+{
+    return sameFilePath(savePath, session.path) ||
+        sameFilePath(savePath, session.mapPath) ||
+        sameFilePath(mapPath, session.path) ||
+        sameFilePath(mapPath, session.mapPath);
 }
 
 bool Exists(const std::filesystem::path& path)
@@ -90,7 +106,25 @@ bool Start(const wchar_t* path, bool overwrite, uint32_t* sessionId)
 
     std::lock_guard<std::mutex> lock(g_mutex);
 
-    std::filesystem::path savePath(path);
+    std::filesystem::path savePath;
+    try {
+        // Keep identities stable if the host changes its working directory.
+        savePath = std::filesystem::absolute(path).lexically_normal();
+        const auto mapPath = std::filesystem::path(savePath.wstring() + L"map");
+        for (const auto& [id, session] : g_sessions) {
+            if (PathInUse(*session, savePath, mapPath)) {
+                return false;
+            }
+        }
+        for (const Session* session : g_closingSessions) {
+            if (PathInUse(*session, savePath, mapPath)) {
+                return false;
+            }
+        }
+    }
+    catch (const std::filesystem::filesystem_error&) {
+        return false;
+    }
     std::filesystem::path mapPath = savePath;
     mapPath += L"map";
     if (!PrepareParent(savePath)) {
@@ -149,9 +183,17 @@ void Stop(uint32_t sessionId)
         }
         session = std::move(it->second);
         g_sessions.erase(it);
+        // Keep both paths reserved until the final map write and media close
+        // complete, without holding g_mutex through that I/O: the demuxer
+        // thread feeds the other sessions under it.
+        g_closingSessions.push_back(session.get());
     }
 
     FinishSession(*session);
+
+    std::lock_guard<std::mutex> lock(g_mutex);
+    g_closingSessions.erase(
+        std::find(g_closingSessions.begin(), g_closingSessions.end(), session.get()));
 }
 
 bool GetStatus(uint32_t sessionId, uint32_t* actualMode, bool* failed, bool* fallbackUsed)

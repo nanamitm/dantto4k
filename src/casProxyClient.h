@@ -45,7 +45,11 @@ private:
     // is owned exclusively by the io_context thread.
     std::mutex mutex;
     std::thread thread;
-    std::map<uint32_t, std::shared_ptr<std::promise<std::shared_ptr<casproxy::ResponseBase>>>> mapResponsePromise;
+    struct PendingResponse {
+        uint32_t expectedOpcode;
+        std::shared_ptr<std::promise<std::shared_ptr<casproxy::ResponseBase>>> promise;
+    };
+    std::map<uint32_t, PendingResponse> mapResponsePromise;
     std::vector<std::function<void(bool)>> connectionWaiters;
     bool connected = false;
     bool connecting{false};

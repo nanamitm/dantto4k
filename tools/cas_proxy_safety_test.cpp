@@ -45,7 +45,15 @@ class Server {
             response.apiReturn = SCARD_S_SUCCESS;
             response.hContext = 1234;
             casproxy::StreamWriter payload;
-            response.pack(payload);
+            if (server.wrongOpcode.load()) {
+                casproxy::SCardReleaseContextResponse wrong;
+                wrong.packetId = id;
+                wrong.resultCode = 0;
+                wrong.apiReturn = SCARD_S_SUCCESS;
+                wrong.pack(payload);
+            } else {
+                response.pack(payload);
+            }
             casproxy::StreamWriter frame;
             frame.writeBe(static_cast<uint32_t>(payload.buffer.size()));
             frame.buffer.insert(frame.buffer.end(), payload.buffer.begin(), payload.buffer.end());
@@ -78,6 +86,7 @@ public:
     std::atomic<bool> drop{false};
     std::atomic<bool> duplicate{false};
     std::atomic<bool> stall{false};
+    std::atomic<bool> wrongOpcode{false};
     explicit Server(uint16_t port)
         : acceptor(io, asio::ip::tcp::endpoint(asio::ip::address_v4::loopback(), port)) {
         accept();
@@ -108,6 +117,10 @@ int main() {
         reservation.close();
         Server server(port);
         require(request(client), "client must recover after initial connection failure");
+        server.wrongOpcode = true;
+        require(!request(client), "wrong response opcode must fail without crashing");
+        server.wrongOpcode = false;
+        require(request(client), "wrong response opcode must allow reconnect");
         for (int i = 0; i < 30; ++i) {
             client.close();
             client.connect();
@@ -145,7 +158,7 @@ int main() {
                 "unresponsive server must time out");
         server.stall = false;
         require(request(client), "request timeout must allow reconnect");
-        std::puts("PASS: refusal, fast completion, concurrent requests, duplicates, EOF, close and timeout recovery");
+        std::puts("PASS: refusal, wrong opcode, fast completion, concurrent requests, duplicates, EOF, close and timeout recovery");
         return 0;
     } catch (const std::exception& e) {
         std::fprintf(stderr, "FAIL: %s\n", e.what());

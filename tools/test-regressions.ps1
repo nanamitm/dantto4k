@@ -1,6 +1,6 @@
 param(
-    [ValidateSet('paths', 'acas', 'casproxy', 'demux', 'bontuner', 'ttml', 'appdata')]
-    [string[]]$Tests = @('paths', 'acas', 'casproxy', 'demux', 'bontuner', 'ttml', 'appdata'),
+    [ValidateSet('paths', 'acas', 'casproxy', 'demux', 'bontuner', 'ttml', 'appdata', 'recorder', 'output')]
+    [string[]]$Tests = @('paths', 'acas', 'casproxy', 'demux', 'bontuner', 'ttml', 'appdata', 'recorder', 'output'),
     [switch]$SkipBuild
 )
 $ErrorActionPreference = 'Stop'
@@ -32,6 +32,9 @@ try {
             & "$PSScriptRoot\test-file-path-safety.ps1"
             continue
         }
+        if ($test -eq 'output') {
+            & "$PSScriptRoot\test-cli-output-safety.ps1"
+        }
         $name = switch ($test) {
             acas { 'acas_safety_test' }
             casproxy { 'cas_proxy_safety_test' }
@@ -39,8 +42,11 @@ try {
             bontuner { 'bontuner_safety_test' }
             ttml { 'ttml_test' }
             appdata { 'app_data_transport_test' }
+            recorder { 'mmts_recorder_safety_test' }
+            output { 'buffered_output_safety_test' }
         }
         $objects = switch ($test) {
+            output { @() }
             acas { @('acasHandler', 'acasCard', 'aes', 'config') | ForEach-Object { Get-Item "$objectDir\$_.obj" } }
             casproxy { Get-Item "$objectDir\casProxyClient.obj" }
             default {

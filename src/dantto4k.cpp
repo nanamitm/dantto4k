@@ -1082,6 +1082,9 @@ int main(int argc, char* argv[]) {
         inputBuffer.erase(inputBuffer.begin(), inputBuffer.begin() + consumed);
 
         totalConsumed += static_cast<uint64_t>(consumed);
+        if (outputStream && !*outputStream) {
+            break; // Stop consuming input after an output write has failed.
+        }
 
         // 巨大な (数十GB の) 8K キャプチャでは、終端の MPU タイムスタンプを得るためだけに
         // ファイル全体を最後までデマルチプレクスするのは非常に遅い。MMT 放送は概ね CBR
@@ -1097,18 +1100,33 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // Commit the buffered tail before deciding whether the conversion succeeded.
+    if (bufferedOutput) {
+        bufferedOutput->flush();
+    }
+    if (outputStream) {
+        outputStream->flush();
+        if (outputFs) {
+            outputFs->close();
+        }
+        if (!*outputStream) {
+            std::cerr << "Unable to finish writing output: " << args.output << std::endl;
+            return 1;
+        }
+    }
+
     progressReporter.finish();
     if (!args.noStats) {
         demuxer.printStatistics();
         if (!args.decodeMmts && handler.getAdtsDropCount() > 0) {
-            std::cout << "ADTS conversion drop: " << handler.getAdtsDropCount() << std::endl;
+            std::cerr << "ADTS conversion drop: " << handler.getAdtsDropCount() << std::endl;
         }
         if (!args.decodeMmts && handler.getEitSectionDropCount() > 0) {
-            std::cout << "EIT section drop (too large for one TS section): "
+            std::cerr << "EIT section drop (too large for one TS section): "
                 << handler.getEitSectionDropCount() << std::endl;
         }
         if (!args.decodeMmts && handler.getSubtitleTimelineDropCount() > 0) {
-            std::cout << "Subtitle drop (no timeline anchor): "
+            std::cerr << "Subtitle drop (no timeline anchor): "
                 << handler.getSubtitleTimelineDropCount() << std::endl;
         }
     }
