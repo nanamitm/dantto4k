@@ -232,6 +232,22 @@ std::vector<VerticalCharacter> vertical_characters(std::string_view text) {
     return characters;
 }
 
+// A length or position on the caption plane as whole dots. A document can
+// carry any number, and converting a double outside the integer's range is
+// undefined, so values are clamped to what a caption plane could use.
+constexpr double kMaxDots = 65535.0;
+
+uint32_t to_dots(double value, double minimum = 0.0) {
+    if (!(value >= minimum)) { // NaN too
+        return static_cast<uint32_t>(minimum);
+    }
+    return static_cast<uint32_t>(std::round(std::min(value, kMaxDots)));
+}
+
+long to_coordinate(double value) {
+    return static_cast<long>(to_dots(value));
+}
+
 bool span_has_text(const resolved::Span& span) {
     return std::ranges::any_of(span.content, [](const auto& content) {
         const auto* text = std::get_if<std::string>(&content);
@@ -658,8 +674,7 @@ private:
                     const double horizontal_scale = middle_size || small_size ? 0.5 : 1.0;
                     const double vertical_scale = small_size ? 0.5 : 1.0;
                     if (style.letter_spacing) {
-                        const auto spacing = static_cast<uint32_t>(std::max(0.0, std::round(
-                                *style.letter_spacing * layoutScale_ / horizontal_scale)));
+                        const auto spacing = to_dots(*style.letter_spacing * layoutScale_ / horizontal_scale);
                         set_character_spacing(spacing);
                     }
 
@@ -668,8 +683,7 @@ private:
                         const double line_height = std::holds_alternative<NormalLineHeight>(*style.line_height)
                                 ? font_height * 1.2
                                 : std::get<double>(*style.line_height);
-                        const auto spacing = static_cast<uint32_t>(std::max(0.0, std::round(
-                                (line_height - font_height) * layoutScale_ / vertical_scale)));
+                        const auto spacing = to_dots((line_height - font_height) * layoutScale_ / vertical_scale);
                         set_line_spacing(spacing);
                     }
 
@@ -732,7 +746,7 @@ private:
                 const double vertical_scale = small_size ? 0.5 : 1.0;
                 const double letter_spacing = style.letter_spacing ? std::max(0.0, *style.letter_spacing * layoutScale_) : 0.0;
                 set_character_spacing(0);
-                set_line_spacing(static_cast<uint32_t>(std::round(letter_spacing / vertical_scale)));
+                set_line_spacing(to_dots(letter_spacing / vertical_scale));
 
                 const double glyph_width = character_composition_width_ * horizontal_scale;
                 const double glyph_height = character_composition_height_ * vertical_scale;
@@ -743,7 +757,7 @@ private:
                     y += step;
                     for (size_t i = 0; i < 2; ++i) {
                         const double offset = (i == 0 ? -0.5 : 0.5) * glyph_width;
-                        append_acps(std::lround(x + offset), std::lround(y));
+                        append_acps(to_coordinate(x + offset), to_coordinate(y));
                         const auto& encoded = encoded_runs.at(encoded_run_index++);
                         output_.insert(output_.end(), encoded.begin(), encoded.end());
                     }
@@ -753,7 +767,7 @@ private:
                     y += step;
                     const double dx = character.small_kana ? glyph_width / 8 : 0.0;
                     const double dy = character.small_kana ? -glyph_height / 8 : 0.0;
-                    append_acps(std::lround(x + dx), std::lround(y + dy));
+                    append_acps(to_coordinate(x + dx), to_coordinate(y + dy));
                     const auto& encoded = encoded_runs.at(encoded_run_index++);
                     output_.insert(output_.end(), encoded.begin(), encoded.end());
                 }
@@ -768,8 +782,8 @@ private:
         if (style.font_size) {
             const double font_width = style.font_size->x;
             const double font_height = style.font_size->y;
-            uint32_t composition_width = static_cast<uint32_t>(std::round(144 * layoutScale_));
-            uint32_t composition_height = static_cast<uint32_t>(std::round(144 * layoutScale_));
+            uint32_t composition_width = to_dots(144 * layoutScale_);
+            uint32_t composition_height = to_dots(144 * layoutScale_);
             uint8_t character_size = B24ControlSet::NSZ;
             if (font_width == 72 && font_height == 144) {
                 character_size = B24ControlSet::MSZ;
@@ -778,8 +792,8 @@ private:
                 character_size = B24ControlSet::SSZ;
             }
             else {
-                composition_width = static_cast<uint32_t>(std::max(1.0, std::round(font_width * layoutScale_)));
-                composition_height = static_cast<uint32_t>(std::max(1.0, std::round(font_height * layoutScale_)));
+                composition_width = to_dots(font_width * layoutScale_, 1.0);
+                composition_height = to_dots(font_height * layoutScale_, 1.0);
             }
             set_character_composition(composition_width, composition_height);
             set_character_size(character_size);
@@ -871,18 +885,18 @@ private:
 
     void append_extent(const LengthPair& extent) {
         output_.push_back(B24ControlSet::CSI);
-        append_number(static_cast<uint32_t>(extent.x * layoutScale_));
+        append_number(static_cast<int>(to_dots(std::floor(extent.x * layoutScale_))));
         output_.push_back(0x3B);
-        append_number(static_cast<uint32_t>(extent.y * layoutScale_));
+        append_number(static_cast<int>(to_dots(std::floor(extent.y * layoutScale_))));
         output_.push_back(B24ControlSet::SP);
         output_.push_back(B24ControlSet::SDF);
     }
 
     void append_origin(const LengthPair& origin) {
         output_.push_back(B24ControlSet::CSI);
-        append_number(static_cast<int>(std::lround(origin.x * layoutScale_)));
+        append_number(static_cast<int>(to_coordinate(origin.x * layoutScale_)));
         output_.push_back(0x3B);
-        append_number(static_cast<int>(std::lround(origin.y * layoutScale_)));
+        append_number(static_cast<int>(to_coordinate(origin.y * layoutScale_)));
         output_.push_back(B24ControlSet::SP);
         output_.push_back(B24ControlSet::SDP);
     }

@@ -92,9 +92,9 @@ enum CheckId {
 Check checks[kCheckCount] = {
     {"arib-pua-drcs", Category::Open, "caption text uses a private-use codepoint the ARIB charset tables cover; is_drcs_codepoint() calls it DRCS anyway, so the caption waits for a glyph the broadcast has no reason to send", 0, {}},
     {"no-arib-code", Category::Fixed, "caption text uses a character no ARIB graphic set has a code for; it used to go out as a code meaning something else, and is now drawn from a font and sent as a DRCS pattern instead", 0, {}},
-    {"p-style-ref", Category::Open, "<p style=\"...\"> - a paragraph style reference, which the parser still never reads", 0, {}},
-    {"nested-span", Category::Open, "<span> inside a <span> - a hard parse error that discards the whole document", 0, {}},
-    {"oversized-length", Category::Open, "a style length large enough to overflow the double-to-uint32_t casts in the B24 encoder", 0, {}},
+    {"p-style-ref", Category::Fixed, "<p style=\"...\"> - a paragraph style reference, which the parser used to ignore", 0, {}},
+    {"nested-span", Category::Fixed, "<span> inside a <span> - used to be a parse error that discarded the whole document", 0, {}},
+    {"oversized-length", Category::Fixed, "a style length large enough to overflow the double-to-integer conversions in the B24 encoder; now clamped", 0, {}},
     {"drcs-unrasterizable", Category::Open, "a received DRCS glyph that produces no pattern, while the statement still designates its code", 0, {}},
     {"ttml-rejected", Category::Open, "a TTML document the parser, resolver or converter rejects - silent in release builds", 0, {}},
     {"eed-multi-item", Category::Fixed, "MH-extended_event_descriptor with 2+ items - the stray i++ wrote only every other one", 0, {}},

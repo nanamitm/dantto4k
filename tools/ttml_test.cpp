@@ -449,6 +449,54 @@ int main() {
         }
     }
 
+    // <p style="..."> is read, nested spans are flattened with the styling of
+    // the spans around them, and absurd lengths do not overflow the encoder.
+    std::printf("14. paragraph styles, nested spans, oversized lengths\n");
+    {
+        const std::string head =
+            "<tt xmlns='http://www.w3.org/ns/ttml' xmlns:tts='http://www.w3.org/ns/ttml#styling'><head><styling>"
+            "<style xml:id='base' tts:fontSize='144px 144px'/>"
+            "<style xml:id='red' tts:color='#ff0000'/>"
+            "<style xml:id='blue' tts:color='#0000ff'/>"
+            "</styling><layout><region xml:id='r' tts:origin='120px 800px' tts:extent='1680px 200px'/>"
+            "</layout></head><body><div>";
+        const auto red = [](const resolved::Span& span) {
+            return span.style.color && span.style.color->r() == 255 && span.style.color->b() == 0;
+        };
+        const auto blue = [](const resolved::Span& span) {
+            return span.style.color && span.style.color->b() == 255 && span.style.color->r() == 0;
+        };
+        const auto text = [](const resolved::Span& span) {
+            std::string out;
+            for (const auto& c : span.content) {
+                if (const auto* t = std::get_if<std::string>(&c)) out += *t;
+            }
+            return out;
+        };
+
+        auto styled = run(head + "<p region='r' style='red'><span style='base'>x</span></p></div></body></tt>");
+        check(styled && styled->division && red(styled->division->paragraphs.at(0).spans.at(0)),
+              "<p style> reaches its spans");
+
+        auto nested = run(head + "<p region='r'><span style='base red'>a<span style='blue'>b</span>c</span></p></div></body></tt>");
+        check(nested.has_value(), "nested spans parse");
+        if (nested && nested->division) {
+            const auto& spans = nested->division->paragraphs.at(0).spans;
+            check(spans.size() == 3 && text(spans[0]) == "a" && text(spans[1]) == "b" && text(spans[2]) == "c",
+                  "the outer span splits around the inner one");
+            check(spans.size() == 3 && red(spans[0]) && blue(spans[1]) && red(spans[2]),
+                  "the inner span overrides the colour, the rest keeps the outer one");
+            check(spans.size() == 3 && spans[1].style.font_size && spans[1].style.font_size->x == 144,
+                  "the inner span inherits the outer font size");
+        }
+
+        auto huge = run(head + "<p region='r'><span style='base' tts:lineHeight='1e30px'>x</span></p></div></body></tt>");
+        if (huge) {
+            auto conv = convert(*huge);
+            check(!conv.outputs.empty(), "a 1e30px line height converts (clamped)");
+        }
+    }
+
     std::printf("\n%s (%d failure(s))\n", failures ? "FAILED" : "ALL PASS", failures);
     return failures ? 1 : 0;
 }
