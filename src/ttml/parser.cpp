@@ -3,11 +3,13 @@
 #include "string_utils.h"
 #include "pugixml.hpp"
 #include <algorithm>
+#include <charconv>
 #include <cstdint>
 #include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -198,6 +200,14 @@ public:
                     .document = {},
                     .error = error
                 };
+            }
+            // Keyframes may come after the styles that use them, so the
+            // animation names are looked up once the whole head is read.
+            for (auto& style : ast_doc_.styles) {
+                resolve_flashing(style.style);
+            }
+            for (auto& region : ast_doc_.regions) {
+                resolve_flashing(region.style);
             }
         }
         if (!body.empty()) {
@@ -401,9 +411,47 @@ private:
         return {};
     }
 
+    // An animation flashes when its keyframes change only the opacity (ARIB
+    // TR-B39 8.5.7.1). One that moves the origin scrolls, which B24 captions
+    // cannot follow.
+    void parse_keyframes(pugi::xml_node keyframes) {
+        const std::string_view name = keyframes.attribute("animationName").value();
+        if (name.empty()) {
+            return;
+        }
+        bool has_opacity_change = false;
+        bool moves = false;
+        for (auto frame = keyframes.child("arib-tt:keyframe"); !frame.empty(); frame = frame.next_sibling("arib-tt:keyframe")) {
+            if (const auto opacity = frame.attribute("tts:opacity")) {
+                double value = 1.0;
+                const std::string_view text = opacity.value();
+                const auto result = std::from_chars(text.data(), text.data() + text.size(), value);
+                if (result.ec == std::errc{} && value < 1.0) {
+                    has_opacity_change = true;
+                }
+            }
+            if (frame.attribute("tts:origin") || frame.attribute("tts:extent")) {
+                moves = true;
+            }
+        }
+        flashing_animations_[std::string(name)] = has_opacity_change && !moves;
+    }
+
+    void resolve_flashing(StyleProperties& style) const {
+        if (!style.animation) {
+            return;
+        }
+        const auto found = flashing_animations_.find(*style.animation);
+        style.flashing = found != flashing_animations_.end() && found->second;
+    }
+
     std::optional<ParseError> parse_styling(pugi::xml_node styling) {
         for (auto child = styling.first_child(); !child.empty(); child = child.next_sibling()) {
             const std::string_view child_name = child.name();
+            if (child_name == "arib-tt:keyframes") {
+                parse_keyframes(child);
+                continue;
+            }
             if (child_name != "style") {
                 continue;
             }
@@ -576,6 +624,33 @@ private:
 
                 output.ruby = attr_value;
             }
+            else if (attr_name == "arib-tt:border" || attr_name == "arib-tt:border-top" ||
+                     attr_name == "arib-tt:border-right" || attr_name == "arib-tt:border-bottom" ||
+                     attr_name == "arib-tt:border-left") {
+                const auto border = parse_border(attr_value);
+                if (!border) {
+                    return make_error("invalid value for " + std::string(attr_name), style);
+                }
+                if (attr_name == "arib-tt:border" || attr_name == "arib-tt:border-top") {
+                    output.border_top = border;
+                }
+                if (attr_name == "arib-tt:border" || attr_name == "arib-tt:border-right") {
+                    output.border_right = border;
+                }
+                if (attr_name == "arib-tt:border" || attr_name == "arib-tt:border-bottom") {
+                    output.border_bottom = border;
+                }
+                if (attr_name == "arib-tt:border" || attr_name == "arib-tt:border-left") {
+                    output.border_left = border;
+                }
+            }
+            else if (attr_name == "arib-tt:animation") {
+                // "<name> <duration> <timing-function> <delay> <count> <direction>"
+                const auto tokens = split_by_whitespace(attr_value);
+                if (!tokens.empty() && tokens[0] != "none") {
+                    output.animation = std::string(tokens[0]);
+                }
+            }
         }
 
         return {};
@@ -700,6 +775,8 @@ private:
     SyncMode mode_;
     bool ignore_timing_;
     ast::Document ast_doc_;
+    // animationName -> whether it is a flashing animation
+    std::unordered_map<std::string, bool> flashing_animations_;
     std::unordered_set<std::string> ids_;
 };
 

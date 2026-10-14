@@ -161,6 +161,20 @@ std::optional<StyleTextOutlineValue> parse_text_outline(std::string_view value_s
 
     return text_outline;
 }
+std::optional<bool> parse_border(std::string_view value) {
+    const auto tokens = split_by_whitespace(value);
+    if (tokens.empty() || tokens.size() > 3) {
+        return std::nullopt;
+    }
+    if (tokens[0] == "solid") {
+        return true;
+    }
+    if (tokens[0] == "none") {
+        return false;
+    }
+    return std::nullopt;
+}
+
 } // namespace ttml
 
 } // namespace arib

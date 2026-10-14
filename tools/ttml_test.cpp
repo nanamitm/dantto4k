@@ -17,6 +17,7 @@
 #include "ttml/resolver.h"
 #include "ttml/b24_converter.h"
 #include "ttml/drcs.h"
+#include <algorithm>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -302,6 +303,65 @@ int main() {
                   !untimed.document->division->paragraphs.at(0).timing.begin &&
                   !untimed.document->division->paragraphs.at(0).timing.end,
               "begin and end are ignored without it");
+    }
+
+    // arib-tt:border* become B24 enclosure (HLC) and an opacity-only
+    // animation becomes flashing (FLC); a scrolling one does not flash.
+    std::printf("10. character enclosure and flashing\n");
+    {
+        const auto contains = [](const std::vector<uint8_t>& data, std::initializer_list<uint8_t> needle) {
+            return std::search(data.begin(), data.end(), needle.begin(), needle.end()) != data.end();
+        };
+        const std::string head =
+            "<tt xmlns='http://www.w3.org/ns/ttml' xmlns:tts='http://www.w3.org/ns/ttml#styling'"
+            " xmlns:arib-tt='http://www.arib.or.jp/ns/arib-tt'><head><styling>"
+            "<arib-tt:keyframes animationName='blink'>"
+            "<arib-tt:keyframe position='0%' tts:opacity='1'/><arib-tt:keyframe position='50%' tts:opacity='0'/>"
+            "<arib-tt:keyframe position='100%' tts:opacity='1'/></arib-tt:keyframes>"
+            "<arib-tt:keyframes animationName='scroll'>"
+            "<arib-tt:keyframe position='0%' tts:origin='340px 40px'/><arib-tt:keyframe position='100%' tts:origin='40px 40px'/>"
+            "</arib-tt:keyframes>"
+            "<style xml:id='base' tts:fontSize='144px 144px'/>"
+            "<style xml:id='box' arib-tt:border='solid 4px #ffffff'/>"
+            "<style xml:id='tl' arib-tt:border-top='solid 4px #ffffff' arib-tt:border-left='solid 4px #ffffff'/>"
+            "<style xml:id='blink' arib-tt:animation='blink 2000ms step-end 0ms 100 normal'/>"
+            "<style xml:id='scroll' arib-tt:animation='scroll 1000ms linear 0ms 1 normal'/>"
+            "</styling><layout><region xml:id='r' tts:origin='120px 800px' tts:extent='1680px 200px'/>"
+            "</layout></head><body><div><p region='r'>";
+        const auto body = [&](const char* styles) {
+            auto doc = run(head + "<span style='base " + styles + "'>a</span></p></div></body></tt>");
+            if (!doc) return std::vector<uint8_t>{};
+            auto conv = convert(*doc);
+            return conv.outputs.empty() ? std::vector<uint8_t>{} : conv.outputs.front().data;
+        };
+        check(contains(body("box"), { 0x97, 0x4F }), "arib-tt:border encloses all four sides (HLC 4F)");
+        check(contains(body("tl"), { 0x97, 0x4C }), "top and left only (HLC 4C)");
+        check(contains(body("blink"), { 0x91, 0x40 }), "an opacity animation flashes (FLC 40)");
+        const auto scrolled = body("scroll");
+        check(!scrolled.empty() && !contains(scrolled, { 0x91, 0x40 }), "a scrolling animation does not flash");
+    }
+
+    // MSZ halves the character cell horizontally and SSZ both ways, spacing
+    // included, so the spacing is sent doubled to keep its size.
+    std::printf("11. spacing with middle and small characters\n");
+    {
+        const auto contains = [](const std::vector<uint8_t>& data, std::initializer_list<uint8_t> needle) {
+            return std::search(data.begin(), data.end(), needle.begin(), needle.end()) != data.end();
+        };
+        auto doc = run(
+            "<tt xmlns='http://www.w3.org/ns/ttml' xmlns:tts='http://www.w3.org/ns/ttml#styling'"
+            " xmlns:arib-tt='http://www.arib.or.jp/ns/arib-tt'><head><styling>"
+            "<style xml:id='mid' tts:fontSize='72px 144px' arib-tt:letter-spacing='16px'/>"
+            "</styling><layout><region xml:id='r' tts:origin='120px 800px' tts:extent='1680px 200px'/>"
+            "</layout></head><body><div><p region='r'><span style='mid'>a</span></p></div></body></tt>");
+        check(doc.has_value(), "document parses");
+        if (doc) {
+            auto conv = convert(*doc);
+            const auto& data = conv.outputs.empty() ? std::vector<uint8_t>{} : conv.outputs.front().data;
+            // 16px at 3840 is 4 on the 960 plane; MSZ halves it, so SHS carries 8.
+            check(contains(data, { 0x9B, '8', 0x20, 0x58 }), "SHS is doubled for MSZ");
+            check(contains(data, { 0x89 }), "MSZ is used");
+        }
     }
 
     std::printf("\n%s (%d failure(s))\n", failures ? "FAILED" : "ALL PASS", failures);
