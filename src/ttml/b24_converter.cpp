@@ -510,20 +510,26 @@ private:
                 const auto& line = block.lines[line_index];
                 for (const auto& run : line.runs) {
                     const auto& style = *run.style;
+                    // MSZ halves the whole character cell horizontally, spacing
+                    // included, and SSZ halves it both ways (ARIB STD-B24), so
+                    // the spacings are sent doubled for those sizes.
+                    const bool middle_size = style.font_size && style.font_size->x == 72 && style.font_size->y == 144;
+                    const bool small_size = style.font_size && style.font_size->x == 72 && style.font_size->y == 72;
+                    const double horizontal_scale = middle_size || small_size ? 0.5 : 1.0;
+                    const double vertical_scale = small_size ? 0.5 : 1.0;
                     if (style.letter_spacing) {
-                        const auto spacing = static_cast<uint32_t>(std::max(0.0, std::round(*style.letter_spacing * layoutScale_)));
+                        const auto spacing = static_cast<uint32_t>(std::max(0.0, std::round(
+                                *style.letter_spacing * layoutScale_ / horizontal_scale)));
                         set_character_spacing(spacing);
                     }
 
                     if (style.line_height && style.font_size) {
-                        const double font_width = style.font_size->x;
                         const double font_height = style.font_size->y;
                         const double line_height = std::holds_alternative<NormalLineHeight>(*style.line_height)
                                 ? font_height * 1.2
                                 : std::get<double>(*style.line_height);
-                        const double character_scale = font_width == 72 && font_height == 72 ? 0.5 : 1.0;
                         const auto spacing = static_cast<uint32_t>(std::max(0.0, std::round(
-                                (line_height - font_height) * layoutScale_ / character_scale)));
+                                (line_height - font_height) * layoutScale_ / vertical_scale)));
                         set_line_spacing(spacing);
                     }
 
@@ -570,6 +576,16 @@ private:
                     const bool underline = style.text_decoration == StyleTextDecorationValue::Underline;
                     set_underline(underline);
 
+                    // HLC: bit 0 bottom, 1 right, 2 top, 3 left.
+                    uint8_t enclosure = 0;
+                    if (style.border_bottom.value_or(false)) enclosure |= 0x01;
+                    if (style.border_right.value_or(false)) enclosure |= 0x02;
+                    if (style.border_top.value_or(false)) enclosure |= 0x04;
+                    if (style.border_left.value_or(false)) enclosure |= 0x08;
+                    set_enclosure(enclosure);
+
+                    set_flashing(style.flashing.value_or(false));
+
                     uint8_t font = 0;
                     if (style.font_weight == StyleFontWeightValue::Bold) {
                         font |= 0x01;
@@ -605,6 +621,8 @@ private:
         line_spacing_ = 24;
         character_spacing_ = 4;
         underline_ = false;
+        enclosure_ = 0;
+        flashing_ = false;
         font_ = 0;
         ornament_enabled_ = false;
         ornament_palette_ = 0;
@@ -715,6 +733,25 @@ private:
 
         output_.push_back(underline ? B24ControlSet::STL : B24ControlSet::SPL);
         underline_ = underline;
+    }
+
+    void set_enclosure(uint8_t sides) {
+        if (enclosure_ == sides) {
+            return;
+        }
+        output_.push_back(B24ControlSet::HLC);
+        output_.push_back(static_cast<uint8_t>(0x40 | sides));
+        enclosure_ = sides;
+    }
+
+    // FLC 0x40 starts normal-phase flashing, 0x4F stops it.
+    void set_flashing(bool flashing) {
+        if (flashing_ == flashing) {
+            return;
+        }
+        output_.push_back(B24ControlSet::FLC);
+        output_.push_back(flashing ? 0x40 : 0x4F);
+        flashing_ = flashing;
     }
 
     void set_text_color(const StyleColorValue& color) {
@@ -836,6 +873,8 @@ private:
     uint32_t line_spacing_{24};
     uint32_t character_spacing_{4};
     bool underline_{false};
+    uint8_t enclosure_{0};
+    bool flashing_{false};
     uint8_t font_{0};
     bool ornament_enabled_{false};
     uint8_t ornament_palette_{0};

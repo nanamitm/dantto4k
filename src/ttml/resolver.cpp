@@ -40,6 +40,12 @@ void merge_style(StyleProperties& target, const StyleProperties& source) {
     merge_property(target.writing_mode, source.writing_mode);
     merge_property(target.letter_spacing, source.letter_spacing);
     merge_property(target.ruby, source.ruby);
+    merge_property(target.border_top, source.border_top);
+    merge_property(target.border_right, source.border_right);
+    merge_property(target.border_bottom, source.border_bottom);
+    merge_property(target.border_left, source.border_left);
+    merge_property(target.animation, source.animation);
+    merge_property(target.flashing, source.flashing);
 }
 
 StyleProperties inherited_style(const StyleProperties& parent) {
@@ -56,6 +62,14 @@ StyleProperties inherited_style(const StyleProperties& parent) {
     result.writing_mode = parent.writing_mode;
     result.letter_spacing = parent.letter_spacing;
     result.ruby = parent.ruby;
+    // A border or animation set on the paragraph's region applies to the whole
+    // display area (ARIB TR-B39 8.5.5.15, Fig. 8-14), so its characters get it.
+    result.border_top = parent.border_top;
+    result.border_right = parent.border_right;
+    result.border_bottom = parent.border_bottom;
+    result.border_left = parent.border_left;
+    result.animation = parent.animation;
+    result.flashing = parent.flashing;
     return result;
 }
 

@@ -79,12 +79,26 @@ struct StyleProperties {
     std::optional<StyleWritingModeValue> writing_mode;
     std::optional<double> letter_spacing;
     std::optional<std::string> ruby;
+    // Character enclosure per side (arib-tt:border, arib-tt:border-top, ...).
+    // Only whether a side is drawn survives: B24 draws enclosures in the
+    // character color with its own line width.
+    std::optional<bool> border_top;
+    std::optional<bool> border_right;
+    std::optional<bool> border_bottom;
+    std::optional<bool> border_left;
+    // arib-tt:animation: the animation name as written, and whether that
+    // animation is a flashing one (opacity keyframes only, ARIB TR-B39 8.5.7.1).
+    std::optional<std::string> animation;
+    std::optional<bool> flashing;
 };
 
 [[nodiscard]] std::optional<StyleColorValue> parse_color(std::string_view text);
 [[nodiscard]] std::optional<double> parse_length(std::string_view value);
 [[nodiscard]] std::optional<LengthPair> parse_length_pair(std::string_view length_string, SingleLengthMode single_length_mode);
 [[nodiscard]] std::optional<StyleTextOutlineValue> parse_text_outline(std::string_view value_string);
+// "<style> <width> <color>" of arib-tt:border*: true for "solid", false for
+// "none", nullopt when malformed.
+[[nodiscard]] std::optional<bool> parse_border(std::string_view value);
 
 } // namespace ttml
 
