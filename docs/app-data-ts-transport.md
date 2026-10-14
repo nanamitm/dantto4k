@@ -36,7 +36,7 @@ MH-AIT・DDMT・DAMT・DCCT) をすべて捨てている。TVTDataBroadcastingWV
 
 ### 1. MMT-SI テーブルの転送 (table_id はそのまま)
 
-MH-AIT (0x9C)、DDMT (0xA3)、DAMT (0xA4)、DCCT (0xA5)、EMT (0xA6) のセクションを、MMT 上のバイト列のまま 1 セクションずつ
+MH-AIT (0x9C)、DDMT (0xA3)、DAMT (0xA4)、DCCT (0xA5) のセクションを、MMT 上のバイト列のまま 1 セクションずつ
 載せる。いずれも MPEG-2 と同じセクション構文と CRC を持つので変換は不要。
 
 - 受信したセクションのうち、CRC が直前と同じものは 1 秒に 1 回だけ送る。CRC が変わったら即座に送る。
@@ -99,6 +99,22 @@ data_byte                     N   TTML 文書またはリソース (放送のま
 - 受信側は、PTS に TTML の最初の begin を足した時刻にアプリケーションへ渡す。過ぎていればすぐに渡す。
 - リソース (data_type が 0 以外) には PTS を付けず、受け取ったらすぐに渡す。
 - 字幕は繰り返し送られないので、間引きはしない。
+
+### 4. EMT (table_id = 0xC2、dantto4k 独自)
+
+アプリケーションはイベントメッセージを、どの EMT から来たか (`event_message_tag` = EMT_tag) で選ぶ。
+EMT_tag と packet_id の対応はアプリケーションサービス記述子 (MPT) にしかないので、EMT は
+そのままではなく EMT_tag を付けて送る。分割の仕方はアイテムと同じ。
+
+```
+-- 先頭セクション (section_number == 0) のみ --
+EMT_tag                       8
+-- 全セクション --
+emt_section_byte              N   EMT (table_id 0xA6) のセクション全体 (CRC_32 含む)
+```
+
+- 間引きは元の EMT のバイト列で行う (1 秒)。
+- アプリケーションサービス記述子に載っていない packet_id の EMT は送らない。
 
 ## 受信側 (TVTDataBroadcastingWV2) の処理
 

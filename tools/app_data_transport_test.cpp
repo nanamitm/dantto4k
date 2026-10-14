@@ -113,6 +113,11 @@ static void testRoutingAndResend() {
     transport.onTableSection(0xFFD2, damt.data(), damt.size(), 0);
     transport.onTableSection(0xFEE2, emt.data(), emt.size(), 0);
     require(sent.size() == 6, "DT message and EMT packet_ids are routed");
+    // The EMT goes out wrapped with its EMT_tag (0x60 for packet_id 0xFEE2).
+    const auto& wrapped = sent[5].second;
+    require(wrapped[0] == MmtTlv::AppDataTransport::kTaggedEmtTableId && crc32Mpeg2(wrapped) == 0, "EMT is wrapped");
+    require(wrapped[8] == 0x60, "EMT_tag precedes the EMT");
+    require(std::equal(emt.begin(), emt.end(), wrapped.begin() + 9), "wrapped EMT is unchanged");
 
     transport.onTableSection(0x1234, damt.data(), damt.size(), 0);
     require(sent.size() == 6 && transport.getUnroutedCount() == 1, "unknown packet_id is dropped");

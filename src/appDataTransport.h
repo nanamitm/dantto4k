@@ -26,6 +26,9 @@ class AppDataTransport {
 public:
     static constexpr uint8_t kItemTableId = 0xC0;
     static constexpr uint8_t kCaptionTableId = 0xC1;
+    // An EMT section, preceded by its EMT_tag (from the application service descriptor).
+    static constexpr uint8_t kTaggedEmtTableId = 0xC2;
+    static constexpr uint8_t kEmtTableId = 0xA6;
     static constexpr uint32_t kFormatIdentifier = 0x44344B41; // 'D4KA'
     static constexpr size_t kMaxSectionSize = 4096;
     static constexpr uint64_t kTableResendInterval90k = 90000; // 1 s
@@ -72,6 +75,8 @@ private:
     // MMT packet_id -> service_id, rebuilt from each MPT.
     std::unordered_map<uint16_t, uint16_t> packetIdToService;
     std::unordered_set<uint16_t> applicationServices;
+    // EMT packet_id -> EMT_tag
+    std::unordered_map<uint16_t, uint8_t> packetIdToEmtTag;
 
     // Content key -> stream time it was last sent.
     std::unordered_map<uint64_t, uint64_t> lastSent;
@@ -79,6 +84,7 @@ private:
     AppItemAssembler assembler;
     uint16_t itemSequence{};
     uint16_t captionSequence{};
+    uint16_t emtSequence{};
     uint64_t oversizedItemCount{};
     uint64_t unroutedCount{};
 };
