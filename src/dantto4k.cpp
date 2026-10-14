@@ -807,7 +807,33 @@ void printReaderList(const Args& args) {
 
 }
 
+#ifdef WIN32
+// Strings are UTF-8 (utf8.manifest makes it the process code page), so the
+// console shows them as such while this runs; its own code page comes back
+// afterwards, as the setting outlives the process.
+class ConsoleUtf8 {
+public:
+    ConsoleUtf8() : previous_(GetConsoleOutputCP()) {
+        if (previous_ != 0) {
+            SetConsoleOutputCP(CP_UTF8);
+        }
+    }
+    ~ConsoleUtf8() {
+        if (previous_ != 0) {
+            SetConsoleOutputCP(previous_);
+        }
+    }
+    ConsoleUtf8(const ConsoleUtf8&) = delete;
+    ConsoleUtf8& operator=(const ConsoleUtf8&) = delete;
+private:
+    UINT previous_;
+};
+#endif
+
 int main(int argc, char* argv[]) {
+#ifdef WIN32
+    ConsoleUtf8 consoleUtf8;
+#endif
     // Before anything can reach the TSDuck library and go looking for a name
     // table this binary is carrying.
     ensureTsduckNamesAvailable();
