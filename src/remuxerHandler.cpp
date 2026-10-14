@@ -17,7 +17,6 @@
 #include "mhApplicationBoundaryAndPermissionDescriptor.h"
 #include "multimediaServiceInformationDescriptor.h"
 #include "networkNameDescriptor.h"
-#include "relatedBroadcasterDescriptor.h"
 #include "serviceListDescriptor.h"
 #include "videoComponentDescriptor.h"
 #include "mhServiceDescriptor.h"
@@ -844,24 +843,12 @@ void RemuxerHandler::onMhBit(const MmtTlv::MhBit& mhBit) {
 
         for (const auto& descriptor : broadcaster.descriptors.list) {
             switch (descriptor->getDescriptorTag()) {
-            case MmtTlv::RelatedBroadcasterDescriptor::kDescriptorTag:
-            {
-                const auto* mmtDescriptor = static_cast<const MmtTlv::RelatedBroadcasterDescriptor*>(descriptor.get());
-                ts::ExtendedBroadcasterDescriptor tsDescriptor;
-                tsDescriptor.broadcaster_type = 1;
-                tsDescriptor.terrestrial_broadcaster_id = mhBit.originalNetworkId;
-
-                for (const auto affiliationId : mmtDescriptor->affiliationIds) {
-                    tsDescriptor.affiliation_ids.emplace_back(affiliationId);
-                }
-
-                for (const auto& broadcasterId : mmtDescriptor->broadcasterIds) {
-                    tsDescriptor.broadcasters.emplace_back(broadcasterId.networkId, broadcasterId.broadcasterId);
-                }
-
-                tsBroadcaster.descs.add(duck, tsDescriptor);
-                break;
-            }
+            // The related broadcaster descriptor has no satellite counterpart in
+            // MPEG-2 TS. Writing it as an extended broadcaster descriptor made
+            // every BS 4K broadcaster a terrestrial one whose terrestrial
+            // broadcaster ID was the network ID, which BS BITs never carry and
+            // which BML receivers reject as conflicting (web-bml logs
+            // "tbid.length > 1" for every BIT). Leave it out, as 2K BS does.
             case MmtTlv::MhSiParameterDescriptor::kDescriptorTag:
             {
                 const auto* mmtDescriptor = static_cast<const MmtTlv::MhSiParameterDescriptor*>(descriptor.get());
