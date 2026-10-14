@@ -187,6 +187,9 @@
     <ClCompile Include="../src/dataTransmissionMessage.cpp" />
     <ClCompile Include="../src/dataUnit.cpp" />
     <ClCompile Include="../src/appDataDumper.cpp" />
+    <ClCompile Include="../src/appDataTransport.cpp" />
+    <ClCompile Include="../src/appItemAssembler.cpp" />
+    <ClCompile Include="../src/applicationServiceDescriptor.cpp" />
     <ClCompile Include="../src/zlibInflate.cpp" />
     <ClCompile Include="../src/demuxerTeeHandler.cpp" />
     <ClCompile Include="../src/dllmain.cpp" />
@@ -309,6 +312,9 @@
     <ClInclude Include="../src/dataTransmissionMessage.h" />
     <ClInclude Include="../src/dataUnit.h" />
     <ClInclude Include="../src/appDataDumper.h" />
+    <ClInclude Include="../src/appDataTransport.h" />
+    <ClInclude Include="../src/appItemAssembler.h" />
+    <ClInclude Include="../src/applicationServiceDescriptor.h" />
     <ClInclude Include="../src/zlibInflate.h" />
     <ClInclude Include="../src/demuxerTeeHandler.h" />
     <ClInclude Include="../src/descriptorConverter.h" />

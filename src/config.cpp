@@ -1,4 +1,5 @@
 #include "config.h"
+#include <algorithm>
 #include <iostream>
 
 Config config = Config{};
@@ -92,6 +93,24 @@ Config loadConfig(const std::string& filename) {
 
                  if (key == "convertResolutionGaiji") {
                      config.convertResolutionGaiji = (value != "false");
+                 }
+             }
+         }
+         if (currentSection == "appdata") {
+             size_t equalPos = line.find('=');
+             if (equalPos != std::string::npos) {
+                 std::string key = trim(line.substr(0, equalPos));
+                 std::string value = trim(line.substr(equalPos + 1));
+
+                 if (key == "enable") {
+                     config.appDataTransport = (value != "false");
+                 }
+                 else if (key == "itemResendInterval") {
+                     try {
+                         config.appDataItemResendSeconds = std::max(1, std::stoi(value));
+                     }
+                     catch (const std::exception&) {
+                     }
                  }
              }
          }

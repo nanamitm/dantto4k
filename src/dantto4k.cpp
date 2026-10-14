@@ -37,6 +37,7 @@ struct Args {
     std::string smartCardReaderName;
     std::string customWinscardDLL;
     bool disableADTSConversion{false};
+    bool noAppData{false};
     bool frontendDescrambled{false};
     bool decodeMmts{false};
     bool listSmartCardReader{false};
@@ -538,6 +539,7 @@ Args parseArguments(int argc, char* argv[]) {
             ("customWinscardDLL", "Specify the path to a winscard.dll", cxxopts::value<std::string>())
 #endif
             ("disableADTSConversion", "Disable ADTS conversion", cxxopts::value<bool>()->default_value("false"))
+            ("no-app-data", "Do not carry data broadcasting (ARIB STD-B62) into the TS output", cxxopts::value<bool>()->default_value("false"))
             ("frontend-descrambled", "Assume the input stream was already descrambled by the frontend and only remux MMT/TLV to MPEG-2 TS", cxxopts::value<bool>()->default_value("false"))
             ("decode-mmts", "Output ACAS-decrypted MMT/TLV instead of MPEG-2 TS", cxxopts::value<bool>()->default_value("false"))
             ("write-mmtsmap", "Write a binary .mmtsmap sidecar for --decode-mmts output", cxxopts::value<bool>()->default_value("false"))
@@ -633,6 +635,7 @@ Args parseArguments(int argc, char* argv[]) {
             }
         }
 
+        args.noAppData = result["no-app-data"].as<bool>();
         if (result["disableADTSConversion"].count()) {
             args.disableADTSConversion = result["disableADTSConversion"].as<bool>();
         }
@@ -842,6 +845,9 @@ int main(int argc, char* argv[]) {
     }
     if (args.disableADTSConversion) {
         config.disableADTSConversion = true;
+    }
+    if (args.noAppData) {
+        config.appDataTransport = false;
     }
 
     bool useStdin = (args.input == "-");

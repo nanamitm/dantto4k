@@ -40,6 +40,7 @@ public:
     void onDamt(const Damt& damt) override;
     void onDdmt(const Ddmt& ddmt) override;
     void onDcct(const Dcct& dcct) override;
+    void onApplicationTableSection(uint16_t packetId, const uint8_t* data, size_t size) override;
     void onNit(const Nit& nit) override;
     void onNtp(const NTPv4& ntp) override;
     void onPacketDrop(uint16_t packetId, const MmtStream* stream) override;
