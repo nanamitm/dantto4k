@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -24,6 +25,7 @@ class Mpt;
 class AppDataTransport {
 public:
     static constexpr uint8_t kItemTableId = 0xC0;
+    static constexpr uint8_t kCaptionTableId = 0xC1;
     static constexpr uint32_t kFormatIdentifier = 0x44344B41; // 'D4KA'
     static constexpr size_t kMaxSectionSize = 4096;
     static constexpr uint64_t kTableResendInterval90k = 90000; // 1 s
@@ -41,16 +43,24 @@ public:
 
     void onTableSection(uint16_t packetId, const uint8_t* data, size_t size, uint64_t now90k);
     void onApplicationData(const MmtStream& mmtStream, const Mpu& mpu, const DataUnit& dataUnit, const MfuData& mfuData, uint64_t now90k);
+    // Hands a caption document or resource of an application service to the
+    // TS side unchanged. pts90k is when the document's time zero is presented
+    // (TS timeline); nullopt means as soon as it arrives.
+    void onCaption(uint16_t packetId, int32_t componentTag, uint8_t dataType, uint8_t tmd, std::optional<uint64_t> pts90k, const std::vector<uint8_t>& data);
     void clear();
 
     // Builds the kItemTableId sections for one item. Empty if it does not fit
     // in 256 sections.
     static std::vector<std::vector<uint8_t>> buildItemSections(const AppItemAssembler::Item& item, uint16_t sequence);
+    static std::vector<std::vector<uint8_t>> buildCaptionSections(int32_t componentTag, uint8_t dataType, uint8_t tmd, std::optional<uint64_t> pts90k, const std::vector<uint8_t>& data, uint16_t sequence);
 
     uint64_t getOversizedItemCount() const { return oversizedItemCount; }
     uint64_t getUnroutedCount() const { return unroutedCount; }
 
 private:
+    // A header goes at the start of the first section; data follows it,
+    // split over up to 256 sections.
+    static std::vector<std::vector<uint8_t>> buildSections(uint8_t tableId, const std::vector<uint8_t>& header, const std::vector<uint8_t>& data, uint16_t sequence);
     // Records the send and returns true if this content was not sent within
     // the interval. A stream clock that went backwards counts as elapsed.
     bool shouldSend(uint64_t key, uint64_t now90k, uint64_t interval90k);
@@ -68,6 +78,7 @@ private:
 
     AppItemAssembler assembler;
     uint16_t itemSequence{};
+    uint16_t captionSequence{};
     uint64_t oversizedItemCount{};
     uint64_t unroutedCount{};
 };
