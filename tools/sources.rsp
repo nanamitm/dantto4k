@@ -4,6 +4,7 @@
 ..\src\additionalAribSubtitleInfo.cpp
 ..\src\adtsConverter.cpp
 ..\src\aes.cpp
+..\src\applicationServiceDescriptor.cpp
 ..\src\aribCharsetEncoder.cpp
 ..\src\aribCharsetTables.cpp
 ..\src\aribTextEncoder.cpp
