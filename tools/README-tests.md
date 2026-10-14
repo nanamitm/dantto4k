@@ -20,6 +20,8 @@ After an existing Release build, individual suites can be selected:
 
 | Suite | Regression covered |
 | --- | --- |
+| `recorder` | Active media/map paths, case aliases and hard links cannot be reused, even with overwrite enabled; independent sessions work and stopped paths can be reused. |
+| `output` | CLI output preserves all data and a closed stdout pipe returns a failure; buffered writes expose short-write and final flush errors. |
 | `paths` | Relative aliases, case differences, hard links and map/media collisions are rejected without modifying input or existing output; separate outputs still work. |
 | `acas` | Successful ECM publishes keys; failed ECM preserves ciphertext; repeats of a failed ECM stay off the card for 1 s while a new ECM is sent at once; the current parity keeps decrypting while a new ECM is on the card and only a parity switch waits; cancellation discards old generations and never waits for blocked card I/O. |
 | `casproxy` | Refused/fast connections, eight concurrent callers, duplicate replies, EOF, explicit close, and a bounded request timeout all recover without replacing the client. |
