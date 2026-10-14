@@ -62,9 +62,14 @@ try {
                 'ole32.lib', 'oleaut32.lib', 'advapi32.lib')
         }
         Set-Content "$name.rsp" ($compilerArgs -join ' ') -Encoding utf8
+        # vcvars64.bat runs vswhere.exe from PATH, where the installer's folder
+        # need not be. The test runs by its full path: with
+        # NoDefaultCurrentDirectoryInExePath set, cmd does not look in the
+        # current directory for a bare name.
         $commands = @('@echo off',
+            ('set "PATH=' + (Split-Path $vswhere) + ';%PATH%"'),
             ('call "' + "$installation\VC\Auxiliary\Build\vcvars64.bat" + '" >nul'),
-            "cl @$name.rsp", 'if errorlevel 1 exit /b 1', "$name.exe")
+            "cl @$name.rsp", 'if errorlevel 1 exit /b 1', ('"%~dp0' + $name + '.exe"'))
         Set-Content "$name.cmd" $commands -Encoding ascii
         & ".\$name.cmd"
         if ($LASTEXITCODE -ne 0) { throw "$name failed (exit $LASTEXITCODE)" }
