@@ -15,10 +15,11 @@ bool ApplicationServiceDescriptor::unpack(Common::ReadStream& stream) {
 
         uint8 = nstream.get8U();
         documentResolution = (uint8 & 0b11110000) >> 4;
-        defaultAitFlag = (uint8 & 0b00000100) >> 2;
-        dtMessageFlag = (uint8 & 0b00000010) >> 1;
 
+        // default_AIT_flag(1), DT_message_flag(1), reserved_future_use(2), EMT_num(4)
         uint8 = nstream.get8U();
+        defaultAitFlag = (uint8 & 0b10000000) >> 7;
+        dtMessageFlag = (uint8 & 0b01000000) >> 6;
         const uint8_t emtNum = uint8 & 0b00001111;
 
         if (!aitLocationInfo.unpack(nstream)) {
