@@ -10,7 +10,9 @@ public:
 	virtual bool unpack(Common::ReadStream& stream) {
 		try {
 			descriptorTag = stream.getBe16U();
-			descriptorLength = stream.get8U();
+			// Descriptors from 0xF000 (the event message descriptor, MH-short
+			// event descriptor, ...) have a 16-bit descriptor_length (ARIB STD-B60).
+			descriptorLength = descriptorTag >= 0xF000 ? stream.getBe16U() : stream.get8U();
 
 			if (stream.leftBytes() < descriptorLength) {
 				return false;

@@ -26,7 +26,7 @@ After an existing Release build, individual suites can be selected:
 | `demux` | A partially parsed MPT cannot remove existing streams; truncated ECM never reaches handlers; the next complete MPT remains usable. |
 | `bontuner` | Failed pointer calls return empty outputs; failed copy calls preserve the destination; successful calls return TS; purge and selection reset buffered input and PCR suppression. |
 | `ttml` | Existing parser, style inheritance, line break and DRCS regression tests. |
-| `appdata` | The application service descriptor gives the MH-AIT, data transmission message and EMT packet_ids; app data sections are routed to their service, held back while unchanged and resent after the interval; item sections split, number and CRC correctly and oversized items are refused. |
+| `appdata` | The application service descriptor gives the MH-AIT, data transmission message and EMT packet_ids, with and without a data transmission message; an EMT whose descriptors have 16-bit lengths parses; app data sections are routed to their service, held back while unchanged and resent after the interval; item sections split, number and CRC correctly and oversized items are refused. |
 
 The CasProxy suite deliberately waits for a request timeout and repeated refused
 TCP connections, so it can take a few minutes on Windows. The loopback server

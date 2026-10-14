@@ -1,5 +1,6 @@
 #include "appDataTransport.h"
 #include "applicationServiceDescriptor.h"
+#include "emt.h"
 #include "mpt.h"
 #include "mpuProcessorBase.h"
 #include <cstdio>
@@ -79,6 +80,55 @@ static void testDescriptor() {
     require(descriptor->aitLocationInfo.packetId == 0xFFA2, "MH-AIT location");
     require(descriptor->dtMessageLocationInfo && descriptor->dtMessageLocationInfo->packetId == 0xFFD2, "DT message location");
     require(descriptor->emts.size() == 2 && descriptor->emts[1].emtTag == 0x60 && descriptor->emts[1].locationInfo.packetId == 0xFEE2, "EMT locations");
+}
+
+// EMT with an event message descriptor (16-bit length) and a UTC-NPT
+// reference descriptor, which no parser knows and must be skipped.
+static void testEmtDescriptors() {
+    std::vector<uint8_t> descriptors = {
+        0xF0, 0x03, 0x00, 0x0E,             // event message descriptor, 14 bytes
+        0x00, 0x10, 0x02,                   // group 1, time_mode NPT
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x27, 0x10,
+        0x01, 0x12, 0x34,                   // type, event_msg_id
+        0x80, 0x21, 0x11,                   // UTC-NPT reference descriptor, 17 bytes
+        0xEB, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xF0,
+    };
+    std::vector<uint8_t> s = { 0xA6, 0x00, 0x00, 0xF0, 0x01, 0xC1, 0x00, 0x00 };
+    s.insert(s.end(), descriptors.begin(), descriptors.end());
+    const size_t sectionLength = s.size() - 3 + 4;
+    s[1] = static_cast<uint8_t>(0xB0 | (sectionLength >> 8));
+    s[2] = static_cast<uint8_t>(sectionLength);
+    const uint32_t crc = crc32Mpeg2(s);
+    s.push_back(static_cast<uint8_t>(crc >> 24)); s.push_back(static_cast<uint8_t>(crc >> 16));
+    s.push_back(static_cast<uint8_t>(crc >> 8)); s.push_back(static_cast<uint8_t>(crc));
+
+    MmtTlv::Common::ReadStream stream(s);
+    MmtTlv::Emt emt;
+    require(emt.unpack(stream), "EMT with 16-bit length descriptors parses");
+    require(emt.eventMsgGroupId == 1, "EMT event_msg_group_id");
+}
+
+// Application service descriptor as sent by BS TV Tokyo 4K: 1920x1080 and no
+// data transmission messages, so the EMTs follow the MH-AIT location.
+static void testDescriptorWithoutDtMessage() {
+    const std::vector<uint8_t> bytes = {
+        0x80, 0x34, 0x16, 0x1F, 0x0F, 0xB4,
+        0x00, 0x91, 0x7F,       // MH-AIT
+        0x40, 0x00, 0x91, 0x74, // EMT
+        0x50, 0x00, 0x91, 0x75,
+        0x60, 0x00, 0x91, 0x76,
+        0x42, 0x00, 0x91, 0x78,
+    };
+    MmtTlv::Common::ReadStream stream(bytes);
+    MmtTlv::ApplicationServiceDescriptor descriptor;
+    require(descriptor.unpack(stream), "descriptor without DT message parses");
+    require(descriptor.documentResolution == 0, "1920x1080 resolution");
+    require(descriptor.defaultAitFlag == 1, "default AIT flag");
+    require(!descriptor.dtMessageLocationInfo, "no DT message location");
+    require(descriptor.aitLocationInfo.packetId == 0x917F, "MH-AIT location without DT message");
+    require(descriptor.emts.size() == 4 && descriptor.emts[0].emtTag == 0x40 && descriptor.emts[0].locationInfo.packetId == 0x9174 &&
+        descriptor.emts[3].emtTag == 0x42 && descriptor.emts[3].locationInfo.packetId == 0x9178, "EMT locations without DT message");
 }
 
 static void testRoutingAndResend() {
@@ -220,6 +270,8 @@ static void testCaptionSections() {
 int main() {
     try {
         testDescriptor();
+        testDescriptorWithoutDtMessage();
+        testEmtDescriptors();
         testRoutingAndResend();
         testItemSections();
         testCaptionSections();
@@ -228,6 +280,6 @@ int main() {
         std::fprintf(stderr, "FAIL: %s\n", e.what());
         return 1;
     }
-    std::puts("PASS: application service descriptor, app data routing/resend, item and caption sections");
+    std::puts("PASS: application service descriptors, EMT descriptors, app data routing/resend, item and caption sections");
     return 0;
 }
