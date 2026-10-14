@@ -260,6 +260,50 @@ int main() {
               "and is not registered under the ampersand that starts it");
     }
 
+    // xml:space is fixed to "default" (ARIB TR-B39 Table 8-6): line feeds and
+    // indentation are white space, not line breaks and blanks.
+    std::printf("8. XML white space in caption text\n");
+    {
+        auto doc = run(std::string(kHead) +
+            "<body><div><p region='r'>\n  <span style='base'>\n    a  b\n  </span>\n"
+            "  <span style='base'>c<br/>\n    d \xE3\x80\x80" "e</span>\n</p></div></body></tt>");
+        check(doc.has_value(), "document parses");
+        if (doc && doc->division) {
+            const auto& spans = doc->division->paragraphs.at(0).spans;
+            std::string text;
+            for (const auto& span : spans) {
+                for (const auto& content : span.content) {
+                    if (const auto* t = std::get_if<std::string>(&content)) {
+                        text += *t;
+                    }
+                    else {
+                        text += '|';
+                    }
+                }
+            }
+            check(text == "a b c|d \xE3\x80\x80" "e",
+                  "runs collapse to one space, none at line edges, U+3000 kept");
+        }
+    }
+
+    // A TMD of 1111 has no time control (ARIB TR-B39 8.5.9.2): begin and end
+    // are ignored for closed captions too.
+    std::printf("9. begin/end ignored without time control\n");
+    {
+        const std::string xml = std::string(kHead) +
+            "<body><div><p region='r' begin='00:00:45.000' end='00:00:50.000'>"
+            "<span style='base'>a</span></p></div></body></tt>";
+        auto timed = parse(xml, SyncMode::Sync);
+        auto untimed = parse(xml, SyncMode::Sync, true);
+        check(timed.document && timed.document->division &&
+                  timed.document->division->paragraphs.at(0).timing.begin.has_value(),
+              "begin is read with time control");
+        check(untimed.document && untimed.document->division &&
+                  !untimed.document->division->paragraphs.at(0).timing.begin &&
+                  !untimed.document->division->paragraphs.at(0).timing.end,
+              "begin and end are ignored without it");
+    }
+
     std::printf("\n%s (%d failure(s))\n", failures ? "FAILED" : "ALL PASS", failures);
     return failures ? 1 : 0;
 }

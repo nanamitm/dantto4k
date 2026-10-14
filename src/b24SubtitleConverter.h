@@ -313,7 +313,9 @@ public:
 
 class B24SubtitleConverter {
 public:
+    // ignoreTiming: the TMD is 1111 (no time control), so begin/end are ignored
+    // and the document is presented when it arrives (ARIB TR-B39 8.5.9.2).
     static bool convert(const std::string& input, std::list<B24SubtitleOutput>& output, B24::PESData::PESType pesType,
-        MmtTlv::SubtitleResolution resolution, const arib::ttml::DrcsGlyphMap& drcsGlyphs = {});
+        MmtTlv::SubtitleResolution resolution, const arib::ttml::DrcsGlyphMap& drcsGlyphs = {}, bool ignoreTiming = false);
 
 };

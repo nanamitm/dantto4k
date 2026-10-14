@@ -7,8 +7,13 @@ MfuProcessResult MpuSubtitleProcessor::process(MmtStream& mmtStream, const std::
     Common::ReadStream stream(data);
 
     try {
-        uint16_t subsampleNumber = stream.getBe16U();
-        uint16_t lastSubsampleNumber = stream.getBe16U();
+        // ARIB STD-B60 Table 9-1. These are four 8-bit fields; reading them as
+        // two 16-bit ones put subtitle_tag and the sequence number into the
+        // subsample number.
+        const uint8_t subtitleTag = stream.get8U();
+        const uint8_t subtitleSequenceNumber = stream.get8U();
+        const uint8_t subsampleNumber = stream.get8U();
+        const uint8_t lastSubsampleNumber = stream.get8U();
 
         uint8_t uint8 = stream.get8U();
         uint8_t dataType = uint8 >> 4;
@@ -23,7 +28,7 @@ MfuProcessResult MpuSubtitleProcessor::process(MmtStream& mmtStream, const std::
 
         if (subsampleNumber == 0 && lastSubsampleNumber > 0 && subsampleInfoListFlag) {
             for (int i = 0; i < lastSubsampleNumber; ++i) {
-                stream.skip(4 + 4); // subsample_i_data_type
+                stream.skip(1); // subsample_i_data_type (4 bits), reserved (4 bits)
 
                 if (lengthExtFlag) {
                     stream.skip(4); // subsample_i_data_size
@@ -43,9 +48,11 @@ MfuProcessResult MpuSubtitleProcessor::process(MmtStream& mmtStream, const std::
         stream.read(mfuData.data.data(), dataSize);
 
         mfuData.streamIndex = mmtStream.getStreamIndex();
-        mfuData.subtitleDataType = dataType;
+        mfuData.subtitleTag = subtitleTag;
+        mfuData.subtitleSequenceNumber = subtitleSequenceNumber;
         mfuData.subtitleSubsampleNumber = subsampleNumber;
         mfuData.subtitleLastSubsampleNumber = lastSubsampleNumber;
+        mfuData.subtitleDataType = dataType;
 
         return MfuProcessResult::output(std::move(mfuData));
     }

@@ -9,11 +9,11 @@
 #include <vector>
 
 bool B24SubtitleConverter::convert(const std::string& input, std::list<B24SubtitleOutput>& output, B24::PESData::PESType pesType,
-    MmtTlv::SubtitleResolution resolution, const arib::ttml::DrcsGlyphMap& drcsGlyphs) {
+    MmtTlv::SubtitleResolution resolution, const arib::ttml::DrcsGlyphMap& drcsGlyphs, bool ignoreTiming) {
     const auto sync_mode = pesType == B24::PESData::PESType::Synchronized
         ? arib::ttml::SyncMode::Sync
         : arib::ttml::SyncMode::Async;
-    auto parse_result = arib::ttml::parse(input, sync_mode);
+    auto parse_result = arib::ttml::parse(input, sync_mode, ignoreTiming);
     if (parse_result.error) {
 #ifdef _DEBUG
         std::cerr << "[TTML] " << parse_result.error->message << std::endl;

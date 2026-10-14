@@ -284,7 +284,7 @@ void RemuxerHandler::convertAndWriteSubtitle(const MmtTlv::MmtStream& mmtStream,
 
     std::list<B24SubtitleOutput> output;
     B24SubtitleConverter::convert(ttml, output, pesType, subtitleInfo->resolution,
-        mapSubtitleDrcsGlyphs[mmtStream.getStreamIndex()]);
+        mapSubtitleDrcsGlyphs[mmtStream.getStreamIndex()], subtitleInfo->tmd == 0b1111);
     subtitleDebugLog("subtitle converted stream=" + std::to_string(mmtStream.getStreamIndex()) +
         " pes=" + std::to_string(output.size()));
     if (output.empty()) {
@@ -361,6 +361,7 @@ void RemuxerHandler::forwardCaptionToApplication(const MmtTlv::MmtStream& mmtStr
     if (!config.appDataTransport) {
         return;
     }
+    // A TMD of 1111 has no time control: the document is presented on arrival.
     std::optional<uint64_t> pts;
     if (mfuData.subtitleDataType == 0) {
         const uint64_t clockPts = lastPcr / 300;
@@ -376,8 +377,19 @@ void RemuxerHandler::forwardCaptionToApplication(const MmtTlv::MmtStream& mmtStr
         }
         pts = base;
     }
-    appDataTransport.onCaption(mmtStream.getPacketId(), mmtStream.getComponentTag(),
-        mfuData.subtitleDataType, subtitleInfo.tmd, pts, mfuData.data);
+    MmtTlv::AppDataTransport::Caption caption;
+    caption.componentTag = mmtStream.getComponentTag();
+    caption.dataType = mfuData.subtitleDataType;
+    caption.tmd = subtitleInfo.tmd;
+    caption.pts90k = pts;
+    caption.languageCode = subtitleInfo.languageCode;
+    caption.resolution = static_cast<uint8_t>(subtitleInfo.resolution);
+    caption.referenceStartTimeSeconds = subtitleInfo.referenceStartTime.seconds;
+    caption.referenceStartTimeFraction = subtitleInfo.referenceStartTime.fraction;
+    caption.subtitleSequenceNumber = mfuData.subtitleSequenceNumber;
+    caption.subsampleNumber = mfuData.subtitleSubsampleNumber;
+    caption.lastSubsampleNumber = mfuData.subtitleLastSubsampleNumber;
+    appDataTransport.onCaption(mmtStream.getPacketId(), caption, mfuData.data);
 }
 
 // The PTS that TTML time zero maps to, or nullopt when the stream signalled no

@@ -92,10 +92,48 @@ std::optional<std::chrono::milliseconds> parse_time_expression(std::string_view 
         + std::chrono::milliseconds{*ms};
 }
 
+// xml:space is fixed to "default" in ARIB-TTML (ARIB TR-B39 Table 8-6), so
+// text is white-space handled as in TTML/XSL: line feeds, tabs and spaces
+// collapse into one space, and none is kept at the start or end of a line (the
+// paragraph's edges and every <br/>). Without this, a caption written over
+// several indented lines showed its line feeds as line breaks and its
+// indentation as blanks. Only ASCII white space is affected; U+3000 and other
+// characters a caption uses for layout are kept.
+void normalize_whitespace(ast::Paragraph& paragraph) {
+    bool at_line_start = true;
+    bool pending_space = false;
+    for (auto& span : paragraph.spans) {
+        for (auto& content : span.content) {
+            auto* text = std::get_if<std::string>(&content);
+            if (!text) {
+                // A line break drops the white space before and after it.
+                at_line_start = true;
+                pending_space = false;
+                continue;
+            }
+            std::string output;
+            output.reserve(text->size());
+            for (const char c : *text) {
+                if (c == ' ' || c == '\t' || c == '\r' || c == '\n') {
+                    pending_space = true;
+                    continue;
+                }
+                if (pending_space && !at_line_start) {
+                    output.push_back(' ');
+                }
+                pending_space = false;
+                at_line_start = false;
+                output.push_back(c);
+            }
+            *text = std::move(output);
+        }
+    }
+}
+
 class Parser {
 public:
-    Parser(std::string_view xml, SyncMode mode)
-        : xml_(xml), mode_(mode) {
+    Parser(std::string_view xml, SyncMode mode, bool ignore_timing)
+        : xml_(xml), mode_(mode), ignore_timing_(ignore_timing) {
     }
 
     ParseResult run() {
@@ -285,6 +323,7 @@ private:
             }
         }
 
+        normalize_whitespace(paragraph);
         division.paragraphs.push_back(std::move(paragraph));
 
         return {};
@@ -609,7 +648,7 @@ private:
     }
 
     std::optional<ParseError> parse_timing(pugi::xml_node node, ast::Timing& timing) {
-        if (mode_ == SyncMode::Async) {
+        if (mode_ == SyncMode::Async || ignore_timing_) {
             return {};
         }
 
@@ -659,14 +698,15 @@ private:
 private:
     std::string xml_;
     SyncMode mode_;
+    bool ignore_timing_;
     ast::Document ast_doc_;
     std::unordered_set<std::string> ids_;
 };
 
 }
 
-ParseResult parse(std::string_view xml, SyncMode mode) {
-	return Parser{ xml, mode }.run();
+ParseResult parse(std::string_view xml, SyncMode mode, bool ignore_timing) {
+	return Parser{ xml, mode, ignore_timing }.run();
 }
 
 }

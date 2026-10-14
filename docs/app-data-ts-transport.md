@@ -89,14 +89,25 @@ pts_flag                      8   0x80: pts が有効
 reserved                      7
 pts                          33   文書の時刻 0 を提示する PTS (TS の時間軸)
 data_size                    32
+extension_length              8   以下の拡張部分のバイト数 (現在 15)。知らない部分は読み飛ばす
+ISO_639_language_code        24   追加字幕情報の言語コード ("jpn" など)
+resolution                    8   追加字幕情報の resolution (0: 1920x1080、1: 3840x2160)
+reference_start_time_seconds 32   reference_start_time (NTP 形式の秒)
+reference_start_time_fraction 32  同 (秒未満)
+subtitle_sequence_number      8   字幕 MFU のヘッダー
+subsample_number              8
+last_subsample_number         8
 -- 全セクション --
 data_byte                     N   TTML 文書またはリソース (放送のまま)
 ```
+
+拡張部分は、ARIB TR-B39 8.10.1.1 がアプリケーションの CaptionListener に渡すと定める項目である。
 
 - PTS は B24 への変換と同じ規則で決める。TMD が 0010 で reference_start_time があればそれを使い、
   PCR より 30 秒以上先なら壊れているとみなして PCR にする。それ以外は受け取った時点の PCR。
   `setPtsOffset` のずらしも同じように掛ける。
 - 受信側は、PTS に TTML の最初の begin を足した時刻にアプリケーションへ渡す。過ぎていればすぐに渡す。
+  TMD が 1111 (時刻制御なし) のときは begin を足さない (ARIB TR-B39 8.5.9.2)。
 - リソース (data_type が 0 以外) には PTS を付けず、受け取ったらすぐに渡す。
 - 字幕は繰り返し送られないので、間引きはしない。
 
