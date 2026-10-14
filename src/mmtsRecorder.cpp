@@ -1,6 +1,7 @@
 #include "mmtsRecorder.h"
 
 #include "mmtsMapWriter.h"
+#include "filePathSafety.h"
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -90,7 +91,23 @@ bool Start(const wchar_t* path, bool overwrite, uint32_t* sessionId)
 
     std::lock_guard<std::mutex> lock(g_mutex);
 
-    std::filesystem::path savePath(path);
+    std::filesystem::path savePath;
+    try {
+        // Keep identities stable if the host changes its working directory.
+        savePath = std::filesystem::absolute(path).lexically_normal();
+        const auto mapPath = std::filesystem::path(savePath.wstring() + L"map");
+        for (const auto& [id, session] : g_sessions) {
+            if (sameFilePath(savePath, session->path) ||
+                sameFilePath(savePath, session->mapPath) ||
+                sameFilePath(mapPath, session->path) ||
+                sameFilePath(mapPath, session->mapPath)) {
+                return false;
+            }
+        }
+    }
+    catch (const std::filesystem::filesystem_error&) {
+        return false;
+    }
     std::filesystem::path mapPath = savePath;
     mapPath += L"map";
     if (!PrepareParent(savePath)) {
@@ -140,18 +157,14 @@ bool Start(const wchar_t* path, bool overwrite, uint32_t* sessionId)
 
 void Stop(uint32_t sessionId)
 {
-    std::unique_ptr<Session> session;
-    {
-        std::lock_guard<std::mutex> lock(g_mutex);
-        auto it = g_sessions.find(sessionId);
-        if (it == g_sessions.end()) {
-            return;
-        }
-        session = std::move(it->second);
-        g_sessions.erase(it);
+    std::lock_guard<std::mutex> lock(g_mutex);
+    auto it = g_sessions.find(sessionId);
+    if (it == g_sessions.end()) {
+        return;
     }
-
-    FinishSession(*session);
+    // Reserve both paths until the final map write and media close complete.
+    FinishSession(*it->second);
+    g_sessions.erase(it);
 }
 
 bool GetStatus(uint32_t sessionId, uint32_t* actualMode, bool* failed, bool* fallbackUsed)

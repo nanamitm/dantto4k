@@ -1,6 +1,6 @@
 param(
-    [ValidateSet('paths', 'acas', 'casproxy', 'demux', 'bontuner', 'ttml', 'appdata')]
-    [string[]]$Tests = @('paths', 'acas', 'casproxy', 'demux', 'bontuner', 'ttml', 'appdata'),
+    [ValidateSet('paths', 'acas', 'casproxy', 'demux', 'bontuner', 'ttml', 'appdata', 'recorder')]
+    [string[]]$Tests = @('paths', 'acas', 'casproxy', 'demux', 'bontuner', 'ttml', 'appdata', 'recorder'),
     [switch]$SkipBuild
 )
 $ErrorActionPreference = 'Stop'
@@ -39,6 +39,7 @@ try {
             bontuner { 'bontuner_safety_test' }
             ttml { 'ttml_test' }
             appdata { 'app_data_transport_test' }
+            recorder { 'mmts_recorder_safety_test' }
         }
         $objects = switch ($test) {
             acas { @('acasHandler', 'acasCard', 'aes', 'config') | ForEach-Object { Get-Item "$objectDir\$_.obj" } }
