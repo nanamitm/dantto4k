@@ -6,7 +6,9 @@
 // still present in the code. FIXED checks fire on a capture that would have hit
 // a defect that has since been repaired, which is what makes such a capture
 // worth keeping as a regression sample - none of the captures on hand when the
-// fixes were written exercise them.
+// fixes were written exercise them. VERIFY checks fire on features that are
+// implemented but were never seen on air; their samples carry the broadcast
+// time (MH-TOT, JST) so the scene can be found and looked at in a player.
 //
 // Build (x64 Native Tools Command Prompt, from this directory):
 //
@@ -21,6 +23,7 @@
 #include "demuxerHandler.h"
 #include "mmtStream.h"
 #include "mhEit.h"
+#include "mhTot.h"
 #include "mhExtendedEventDescriptor.h"
 // casProxyClient.h pulls in asio, which must see winsock2.h before
 // smartCard.h brings in winscard.h and with it windows.h.
@@ -50,9 +53,11 @@ namespace { bool g_dumpDrcs = false; }
 
 namespace {
 
+enum class Category { Open, Fixed, Verify };
+
 struct Check {
     const char* id;
-    bool open;
+    Category category;
     const char* what;
     unsigned long long hits;
     std::vector<std::string> samples;
@@ -74,25 +79,56 @@ struct Check {
 enum CheckId {
     kAribPuaDrcs, kNoAribCode, kPStyleRef, kNestedSpan, kOversizedLength, kDrcsUnrasterizable,
     kTtmlRejected, kEedMultiItem, kSubtitleTmd, kMultiCueDoc, kClearOnlyDoc,
-    kPLevelContent, kInlineTts, kStyleGeometry, kCheckCount
+    kPLevelContent, kInlineTts, kStyleGeometry,
+    kVerticalWriting, kVerticalTcy, kVerticalSmallKana, kHalfWidth,
+    kNptReference, kNptEvent, kTimedEvent, kCheckCount
 };
 
 Check checks[kCheckCount] = {
-    {"arib-pua-drcs", true, "caption text uses a private-use codepoint the ARIB charset tables cover; is_drcs_codepoint() calls it DRCS anyway, so the caption waits for a glyph the broadcast has no reason to send", 0, {}},
-    {"no-arib-code", false, "caption text uses a character no ARIB graphic set has a code for; it used to go out as a code meaning something else, and is now drawn from a font and sent as a DRCS pattern instead", 0, {}},
-    {"p-style-ref", true, "<p style=\"...\"> - a paragraph style reference, which the parser still never reads", 0, {}},
-    {"nested-span", true, "<span> inside a <span> - a hard parse error that discards the whole document", 0, {}},
-    {"oversized-length", true, "a style length large enough to overflow the double-to-uint32_t casts in the B24 encoder", 0, {}},
-    {"drcs-unrasterizable", true, "a received DRCS glyph that produces no pattern, while the statement still designates its code", 0, {}},
-    {"ttml-rejected", true, "a TTML document the parser, resolver or converter rejects - silent in release builds", 0, {}},
-    {"eed-multi-item", false, "MH-extended_event_descriptor with 2+ items - the stray i++ wrote only every other one", 0, {}},
-    {"subtitle-tmd", false, "subtitle descriptor with no usable reference_start_time - every cue used to be dropped", 0, {}},
-    {"multi-cue-doc", false, "TTML yielding 2+ timed outputs - these used to collapse onto a single PTS", 0, {}},
-    {"clear-only-doc", false, "TTML yielding only a clear, or a first output with no begin - these used to be discarded", 0, {}},
-    {"p-level-content", false, "text or <br/> directly inside <p> - used to be dropped, running the lines together", 0, {}},
-    {"inline-tts", false, "tts:* written directly on <p> or <span> - used to be ignored entirely", 0, {}},
-    {"style-geometry", false, "tts:origin/tts:extent on a <style> in <head> - used to be dropped, leaving the region with no geometry", 0, {}}
+    {"arib-pua-drcs", Category::Open, "caption text uses a private-use codepoint the ARIB charset tables cover; is_drcs_codepoint() calls it DRCS anyway, so the caption waits for a glyph the broadcast has no reason to send", 0, {}},
+    {"no-arib-code", Category::Fixed, "caption text uses a character no ARIB graphic set has a code for; it used to go out as a code meaning something else, and is now drawn from a font and sent as a DRCS pattern instead", 0, {}},
+    {"p-style-ref", Category::Open, "<p style=\"...\"> - a paragraph style reference, which the parser still never reads", 0, {}},
+    {"nested-span", Category::Open, "<span> inside a <span> - a hard parse error that discards the whole document", 0, {}},
+    {"oversized-length", Category::Open, "a style length large enough to overflow the double-to-uint32_t casts in the B24 encoder", 0, {}},
+    {"drcs-unrasterizable", Category::Open, "a received DRCS glyph that produces no pattern, while the statement still designates its code", 0, {}},
+    {"ttml-rejected", Category::Open, "a TTML document the parser, resolver or converter rejects - silent in release builds", 0, {}},
+    {"eed-multi-item", Category::Fixed, "MH-extended_event_descriptor with 2+ items - the stray i++ wrote only every other one", 0, {}},
+    {"subtitle-tmd", Category::Fixed, "subtitle descriptor with no usable reference_start_time - every cue used to be dropped", 0, {}},
+    {"multi-cue-doc", Category::Fixed, "TTML yielding 2+ timed outputs - these used to collapse onto a single PTS", 0, {}},
+    {"clear-only-doc", Category::Fixed, "TTML yielding only a clear, or a first output with no begin - these used to be discarded", 0, {}},
+    {"p-level-content", Category::Fixed, "text or <br/> directly inside <p> - used to be dropped, running the lines together", 0, {}},
+    {"inline-tts", Category::Fixed, "tts:* written directly on <p> or <span> - used to be ignored entirely", 0, {}},
+    {"style-geometry", Category::Fixed, "tts:origin/tts:extent on a <style> in <head> - used to be dropped, leaving the region with no geometry", 0, {}},
+    {"vertical-writing", Category::Verify, "tts:writingMode=\"tbrl\" caption - laid out character by character, punctuation in vertical forms", 0, {}},
+    {"vertical-tcy", Category::Verify, "two half-width characters on their own in vertical text - shown side by side in one cell (tate-chu-yoko)", 0, {}},
+    {"vertical-small-kana", Category::Verify, "small kana in vertical text - moved to the upper right of the cell", 0, {}},
+    {"half-width", Category::Verify, "half-width (MSZ) characters in horizontal text - check their width and spacing", 0, {}},
+    {"npt-reference", Category::Verify, "NPT reference message (UTC-NPT reference descriptor in an EMT) - drives setAlarmByUTCNPT/getUTCNPT", 0, {}},
+    {"npt-event", Category::Verify, "event message timed by NPT (time_mode 2) - fires at the time the NPT reference gives", 0, {}},
+    {"timed-event", Category::Verify, "event message timed by UTC or relative time (time_mode 1, 3, 5) - check it fires on time", 0, {}}
 };
+
+// The broadcast time of the last MH-TOT, put in front of VERIFY samples.
+std::string g_broadcastTime;
+
+std::string formatJst(uint64_t jst) {
+    // 16-bit MJD then hhmmss in BCD (ARIB STD-B10)
+    const int mjd = static_cast<int>(jst >> 24);
+    const int yp = static_cast<int>((mjd - 15078.2) / 365.25);
+    const int mp = static_cast<int>((mjd - 14956.1 - static_cast<int>(yp * 365.25)) / 30.6001);
+    const int day = mjd - 14956 - static_cast<int>(yp * 365.25) - static_cast<int>(mp * 30.6001);
+    const int k = (mp == 14 || mp == 15) ? 1 : 0;
+    const int year = 1900 + yp + k;
+    const int month = mp - 1 - k * 12;
+    const auto bcd = [&](int shift) { const int v = static_cast<int>((jst >> shift) & 0xFF); return (v >> 4) * 10 + (v & 0xF); };
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d", year, month, day, bcd(16), bcd(8), bcd(0));
+    return buf;
+}
+
+std::string timed(const std::string& sample) {
+    return (g_broadcastTime.empty() ? std::string("[time unknown] ") : "[" + g_broadcastTime + "] ") + sample;
+}
 
 std::string formatCp(uint32_t cp) {
     char buf[16];
@@ -292,6 +328,146 @@ void scanTtmlText(const std::string& xml) {
     }
 }
 
+bool isSmallKana(uint32_t cp) {
+    switch (cp) {
+    case 0x3041: case 0x3043: case 0x3045: case 0x3047: case 0x3049:
+    case 0x3063: case 0x3083: case 0x3085: case 0x3087: case 0x308E:
+    case 0x3095: case 0x3096:
+    case 0x30A1: case 0x30A3: case 0x30A5: case 0x30A7: case 0x30A9:
+    case 0x30C3: case 0x30E3: case 0x30E5: case 0x30E7: case 0x30EE:
+    case 0x30F5: case 0x30F6:
+        return true;
+    default:
+        return cp >= 0x31F0 && cp <= 0x31FF;
+    }
+}
+
+std::string spanText(const arib::ttml::resolved::Span& span) {
+    std::string text;
+    for (const auto& content : span.content) {
+        if (const auto* t = std::get_if<std::string>(&content)) {
+            text += *t;
+        }
+    }
+    return text;
+}
+
+size_t countCodepoints(std::string_view text) {
+    size_t count = 0;
+    for (const auto c : text) {
+        if ((static_cast<unsigned char>(c) & 0xC0) != 0x80) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+// The first characters of text, cut on a character boundary.
+std::string headText(std::string_view text, size_t characters) {
+    size_t count = 0;
+    for (size_t i = 0; i < text.size(); ++i) {
+        if ((static_cast<unsigned char>(text[i]) & 0xC0) != 0x80 && count++ == characters) {
+            return std::string(text.substr(0, i)) + "...";
+        }
+    }
+    return std::string(text);
+}
+
+// What a document uses of the features the converter handles but no capture
+// on hand has: vertical writing (with tate-chu-yoko and small kana) and
+// half-width characters.
+void scanTtmlFeatures(const arib::ttml::resolved::Document& document) {
+    if (!document.division) {
+        return;
+    }
+    for (const auto& paragraph : document.division->paragraphs) {
+        std::string paragraphText;
+        for (const auto& span : paragraph.spans) {
+            paragraphText += spanText(span);
+        }
+        const std::string sample = timed(headText(paragraphText, 20));
+        for (const auto& span : paragraph.spans) {
+            const auto& region = span.region ? span.region : paragraph.region;
+            const bool vertical = region && region->style.writing_mode == arib::ttml::StyleWritingModeValue::Tbrl;
+            const auto& size = span.style.font_size;
+            const bool halfWidth = size && size->x * 2 == size->y;
+            const std::string text = spanText(span);
+            if (text.empty()) {
+                continue;
+            }
+            if (vertical) {
+                checks[kVerticalWriting].hit(sample);
+                if (halfWidth && countCodepoints(text) == 2) {
+                    checks[kVerticalTcy].hit(timed(text) + " in " + headText(paragraphText, 20));
+                }
+                std::set<uint32_t> codepoints;
+                collectCodepoints(text, codepoints);
+                for (const auto cp : codepoints) {
+                    if (isSmallKana(cp)) {
+                        checks[kVerticalSmallKana].hit(sample);
+                        break;
+                    }
+                }
+            }
+            else if (halfWidth) {
+                checks[kHalfWidth].hit(timed(headText(text, 12)) + " in " + headText(paragraphText, 20));
+            }
+        }
+    }
+}
+
+// An EMT section (ARIB STD-B60 11.2.1.1): NPT reference messages and event
+// messages timed by NPT, UTC or relative time.
+void scanEmt(uint16_t packetId, const uint8_t* data, size_t size) {
+    if (size < 12 || data[0] != 0xA6) {
+        return;
+    }
+    const size_t sectionSize = 3 + (((data[1] & 0x0F) << 8) | data[2]);
+    if (sectionSize > size || sectionSize < 12) {
+        return;
+    }
+    char where[32];
+    std::snprintf(where, sizeof(where), "packet_id 0x%04X", packetId);
+    const uint8_t* p = data + 8;
+    const uint8_t* end = data + sectionSize - 4;
+    while (p + 3 <= end) {
+        const uint16_t tag = static_cast<uint16_t>((p[0] << 8) | p[1]);
+        size_t length;
+        const uint8_t* body;
+        if (tag >= 0xF000) {
+            if (p + 4 > end) break;
+            length = static_cast<size_t>((p[2] << 8) | p[3]);
+            body = p + 4;
+        }
+        else {
+            length = p[2];
+            body = p + 3;
+        }
+        if (body + length > end) {
+            break;
+        }
+        if (tag == 0x8021 && length >= 17) {
+            uint32_t nptSeconds = (body[8] << 24) | (body[9] << 16) | (body[10] << 8) | body[11];
+            char buf[96];
+            std::snprintf(buf, sizeof(buf), "%s NPT %u s, scale %u, leap %u", where, nptSeconds,
+                          (body[16] >> 4) & 3, body[16] >> 6);
+            checks[kNptReference].hit(timed(buf));
+        }
+        else if (tag == 0xF003 && length >= 3) {
+            const uint8_t timeMode = body[2];
+            char buf[64];
+            std::snprintf(buf, sizeof(buf), "%s time_mode %u", where, timeMode);
+            if (timeMode == 2) {
+                checks[kNptEvent].hit(timed(buf));
+            }
+            else if (timeMode == 1 || timeMode == 3 || timeMode == 5) {
+                checks[kTimedEvent].hit(timed(buf));
+            }
+        }
+        p = body + length;
+    }
+}
+
 // Feeds synthetic documents through the detectors, so the scanner is known to
 // fire rather than merely known to stay quiet on captures that contain nothing
 // - every capture on hand is quiet, which on its own proves little. The checks
@@ -400,6 +576,50 @@ int runSelfTest() {
         report(!glyphs.empty() && checks[kDrcsUnrasterizable].hits > before, "drcs-unrasterizable");
     }
 
+    // VERIFY: vertical writing with tate-chu-yoko and small kana, half-width
+    // characters, NPT reference and timed event messages.
+    {
+        const auto features = [](const std::string& xml) {
+            auto parsed = arib::ttml::parse(xml, arib::ttml::SyncMode::Async);
+            if (parsed.has_error() || !parsed.document) return;
+            auto resolved = arib::ttml::resolve(*parsed.document, arib::ttml::SyncMode::Async);
+            if (resolved.has_error() || !resolved.document) return;
+            scanTtmlFeatures(*resolved.document);
+        };
+        const std::string head =
+            "<tt xmlns='http://www.w3.org/ns/ttml' xmlns:tts='http://www.w3.org/ns/ttml#styling'><head><styling>"
+            "<style xml:id='full' tts:fontSize='144px 144px'/><style xml:id='half' tts:fontSize='72px 144px'/>"
+            "</styling><layout><region xml:id='v' tts:origin='3000px 200px' tts:extent='600px 1600px' tts:writingMode='tbrl'/>"
+            "<region xml:id='h' tts:origin='0px 1800px' tts:extent='3000px 200px'/></layout></head><body><div>";
+        const auto vertical = checks[kVerticalWriting].hits;
+        const auto tcy = checks[kVerticalTcy].hits;
+        const auto kana = checks[kVerticalSmallKana].hits;
+        const auto half = checks[kHalfWidth].hits;
+        // vertical "12" + U+3061 U+3087 (cho), horizontal half-width "AB"
+        features(head + "<p region='v'><span style='half'>12</span><span style='full'>\xE3\x81\xA1\xE3\x82\x87</span></p>"
+                        "<p region='h'><span style='half'>AB</span></p></div></body></tt>");
+        report(checks[kVerticalWriting].hits > vertical, "vertical-writing");
+        report(checks[kVerticalTcy].hits > tcy, "vertical-tcy");
+        report(checks[kVerticalSmallKana].hits > kana, "vertical-small-kana");
+        report(checks[kHalfWidth].hits == half + 1, "half-width (horizontal only)");
+    }
+    {
+        // EMT: UTC-NPT reference descriptor, an NPT-timed and a UTC-timed event message
+        std::vector<uint8_t> s = { 0xA6, 0xB0, 0x00, 0xFF, 0xFF, 0xC1, 0x00, 0x00,
+            0x80, 0x21, 0x11, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x03, 0xE8, 0, 0, 0, 0, 0x30,
+            0xF0, 0x03, 0x00, 0x0E, 0x00, 0x1F, 0x02, 0, 0, 0x03, 0xF2, 0, 0, 0, 0, 0x01, 0x01, 0x02,
+            0xF0, 0x03, 0x00, 0x0E, 0x00, 0x1F, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0x01, 0x01, 0x03,
+            0, 0, 0, 0 };
+        s[2] = static_cast<uint8_t>(s.size() - 3);
+        const auto npt = checks[kNptReference].hits;
+        const auto nptEvent = checks[kNptEvent].hits;
+        const auto timedEvent = checks[kTimedEvent].hits;
+        scanEmt(0x9174, s.data(), s.size());
+        report(checks[kNptReference].hits > npt, "npt-reference");
+        report(checks[kNptEvent].hits > nptEvent, "npt-event");
+        report(checks[kTimedEvent].hits > timedEvent, "timed-event");
+    }
+
     std::printf("\n%s (%d failure(s))\n", failed ? "SELFTEST FAILED" : "SELFTEST PASS", failed);
     std::printf("uncovered here, these need a real stream: eed-multi-item, subtitle-tmd,"
                 " multi-cue-doc, clear-only-doc, ttml-rejected\n");
@@ -411,6 +631,7 @@ public:
     unsigned long long ttmlDocs{0};
     unsigned long long glyphResources{0};
     unsigned long long eitEvents{0};
+    unsigned long long emtSections{0};
 
     void onSubtitleData(const MmtTlv::MmtStream& stream, const MmtTlv::MfuData& mfu) override {
         const std::string payload(mfu.data.begin(), mfu.data.end());
@@ -462,6 +683,7 @@ public:
             checks[kTtmlRejected].hit(resolved.error ? resolved.error->message : "resolve failed");
             return;
         }
+        scanTtmlFeatures(*resolved.document);
         const auto resolution = info ? info->resolution : MmtTlv::SubtitleResolution::Resolution4K;
         auto converted = arib::ttml::convert_to_b24(*resolved.document, sync, resolution,
                                                     glyphsByStream_[index]);
@@ -485,6 +707,17 @@ public:
         if (referenceTimed && !converted.outputs.empty() && !converted.outputs.front().begin) {
             checks[kClearOnlyDoc].hit(converted.outputs.size() == 1 ? "clear-only document"
                                                                    : "first output has no begin");
+        }
+    }
+
+    void onMhTot(const MmtTlv::MhTot& tot) override {
+        g_broadcastTime = formatJst(tot.jstTime);
+    }
+
+    void onApplicationTableSection(uint16_t packetId, const uint8_t* data, size_t size) override {
+        if (size > 0 && data[0] == 0xA6) {
+            ++emtSections;
+            scanEmt(packetId, data, size);
         }
     }
 
@@ -616,8 +849,9 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    std::printf("scanned %.1f MB - %llu TTML document(s), %llu glyph resource(s), %llu EIT event(s)\n\n",
-                consumedTotal / 1048576.0, scanner.ttmlDocs, scanner.glyphResources, scanner.eitEvents);
+    std::printf("scanned %.1f MB - %llu TTML document(s), %llu glyph resource(s), %llu EIT event(s), %llu EMT section(s)\n\n",
+                consumedTotal / 1048576.0, scanner.ttmlDocs, scanner.glyphResources, scanner.eitEvents,
+                scanner.emtSections);
 
     if (scanner.ttmlDocs == 0 && scanner.eitEvents == 0) {
         std::printf("nothing to inspect - no subtitles or EIT were decoded.\n"
@@ -626,13 +860,19 @@ int main(int argc, char* argv[]) {
     }
 
     int fired = 0;
-    for (int pass = 0; pass < 2; ++pass) {
-        const bool open = pass == 0;
-        std::printf("%s\n", open ? "OPEN - defects still present in the code:"
-                                 : "FIXED - this capture would have hit these before the fix:");
+    const struct {
+        Category category;
+        const char* title;
+    } sections[] = {
+        { Category::Open, "OPEN - defects still present in the code:" },
+        { Category::Fixed, "FIXED - this capture would have hit these before the fix:" },
+        { Category::Verify, "VERIFY - implemented but never seen on air; look at these scenes in a player:" },
+    };
+    for (const auto& section : sections) {
+        std::printf("%s\n", section.title);
         bool any = false;
         for (const auto& check : checks) {
-            if (check.open != open || check.hits == 0) {
+            if (check.category != section.category || check.hits == 0) {
                 continue;
             }
             any = true;
