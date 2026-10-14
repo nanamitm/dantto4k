@@ -974,7 +974,9 @@ void MmtTlvDemuxer::processMpu(Common::ReadStream& stream) {
         // Incomplete fragments must not poison a new MPU or join its data.
         validator->clear();
         assembler->clear();
-        mmtStream->mpuProcessor->clear();
+        if (mmtStream->mpuProcessor) {
+            mmtStream->mpuProcessor->clear();
+        }
     }
 
     mmtStream->rapFlag = mmtp.rapFlag;
