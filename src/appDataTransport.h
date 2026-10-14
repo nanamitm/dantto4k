@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <array>
 #include <functional>
 #include <optional>
 #include <unordered_map>
@@ -24,6 +25,25 @@ class Mpt;
 // only sent again after an interval of stream time.
 class AppDataTransport {
 public:
+    // A caption MFU and what ARIB TR-B39 8.10.1.1 hands applications with it
+    // (CaptionListener): the MH-data component descriptor's additional
+    // identification information and the MFU header.
+    struct Caption {
+        int32_t componentTag{};
+        uint8_t dataType{};
+        uint8_t tmd{};
+        // When the document's time zero is presented (TS timeline); nullopt
+        // means as soon as it arrives.
+        std::optional<uint64_t> pts90k;
+        std::array<char, 3> languageCode{ 'j', 'p', 'n' };
+        uint8_t resolution{};
+        uint32_t referenceStartTimeSeconds{};
+        uint32_t referenceStartTimeFraction{};
+        uint8_t subtitleSequenceNumber{};
+        uint8_t subsampleNumber{};
+        uint8_t lastSubsampleNumber{};
+    };
+
     static constexpr uint8_t kItemTableId = 0xC0;
     static constexpr uint8_t kCaptionTableId = 0xC1;
     // An EMT section, preceded by its EMT_tag (from the application service descriptor).
@@ -47,15 +67,14 @@ public:
     void onTableSection(uint16_t packetId, const uint8_t* data, size_t size, uint64_t now90k);
     void onApplicationData(const MmtStream& mmtStream, const Mpu& mpu, const DataUnit& dataUnit, const MfuData& mfuData, uint64_t now90k);
     // Hands a caption document or resource of an application service to the
-    // TS side unchanged. pts90k is when the document's time zero is presented
-    // (TS timeline); nullopt means as soon as it arrives.
-    void onCaption(uint16_t packetId, int32_t componentTag, uint8_t dataType, uint8_t tmd, std::optional<uint64_t> pts90k, const std::vector<uint8_t>& data);
+    // TS side unchanged.
+    void onCaption(uint16_t packetId, const Caption& caption, const std::vector<uint8_t>& data);
     void clear();
 
     // Builds the kItemTableId sections for one item. Empty if it does not fit
     // in 256 sections.
     static std::vector<std::vector<uint8_t>> buildItemSections(const AppItemAssembler::Item& item, uint16_t sequence);
-    static std::vector<std::vector<uint8_t>> buildCaptionSections(int32_t componentTag, uint8_t dataType, uint8_t tmd, std::optional<uint64_t> pts90k, const std::vector<uint8_t>& data, uint16_t sequence);
+    static std::vector<std::vector<uint8_t>> buildCaptionSections(const Caption& caption, const std::vector<uint8_t>& data, uint16_t sequence);
 
     uint64_t getOversizedItemCount() const { return oversizedItemCount; }
     uint64_t getUnroutedCount() const { return unroutedCount; }

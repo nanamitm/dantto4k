@@ -164,7 +164,7 @@ void AppDataTransport::onApplicationData(const MmtStream& mmtStream, const Mpu& 
     }
 }
 
-void AppDataTransport::onCaption(uint16_t packetId, int32_t componentTag, uint8_t dataType, uint8_t tmd, std::optional<uint64_t> pts90k, const std::vector<uint8_t>& data) {
+void AppDataTransport::onCaption(uint16_t packetId, const Caption& caption, const std::vector<uint8_t>& data) {
     if (!sectionCallback) {
         return;
     }
@@ -173,7 +173,7 @@ void AppDataTransport::onCaption(uint16_t packetId, int32_t componentTag, uint8_
         unroutedCount++;
         return;
     }
-    const auto sections = buildCaptionSections(componentTag, dataType, tmd, pts90k, data, captionSequence);
+    const auto sections = buildCaptionSections(caption, data, captionSequence);
     if (sections.empty()) {
         oversizedItemCount++;
         return;
@@ -193,16 +193,29 @@ std::vector<std::vector<uint8_t>> AppDataTransport::buildItemSections(const AppI
     return buildSections(kItemTableId, header, item.data, sequence);
 }
 
-std::vector<std::vector<uint8_t>> AppDataTransport::buildCaptionSections(int32_t componentTag, uint8_t dataType, uint8_t tmd, std::optional<uint64_t> pts90k, const std::vector<uint8_t>& data, uint16_t sequence) {
+std::vector<std::vector<uint8_t>> AppDataTransport::buildCaptionSections(const Caption& caption, const std::vector<uint8_t>& data, uint16_t sequence) {
     std::vector<uint8_t> header;
-    putBe16(header, static_cast<uint16_t>(componentTag));
-    header.push_back(dataType);
-    header.push_back(tmd);
-    header.push_back(pts90k ? 0x80 : 0x00);
-    const uint64_t pts = pts90k.value_or(0) & 0x1FFFFFFFFULL;
+    putBe16(header, static_cast<uint16_t>(caption.componentTag));
+    header.push_back(caption.dataType);
+    header.push_back(caption.tmd);
+    header.push_back(caption.pts90k ? 0x80 : 0x00);
+    const uint64_t pts = caption.pts90k.value_or(0) & 0x1FFFFFFFFULL;
     header.push_back(static_cast<uint8_t>(pts >> 32));
     putBe32(header, static_cast<uint32_t>(pts));
     putBe32(header, static_cast<uint32_t>(data.size()));
+
+    // Extension, preceded by its length so receivers can skip what they do
+    // not know: language, resolution, reference start time, MFU header numbers.
+    std::vector<uint8_t> extension;
+    extension.insert(extension.end(), caption.languageCode.begin(), caption.languageCode.end());
+    extension.push_back(caption.resolution);
+    putBe32(extension, caption.referenceStartTimeSeconds);
+    putBe32(extension, caption.referenceStartTimeFraction);
+    extension.push_back(caption.subtitleSequenceNumber);
+    extension.push_back(caption.subsampleNumber);
+    extension.push_back(caption.lastSubsampleNumber);
+    header.push_back(static_cast<uint8_t>(extension.size()));
+    header.insert(header.end(), extension.begin(), extension.end());
     return buildSections(kCaptionTableId, header, data, sequence);
 }
 

@@ -29,9 +29,12 @@ struct MfuData {
 	bool keyframe{false};
 	bool isFirstFragment{false};
 	bool isLastFragment{false};
+	// Closed caption / superimposition MFU header (ARIB STD-B60 Table 9-1)
+	uint8_t subtitleTag{0};
+	uint8_t subtitleSequenceNumber{0};
+	uint8_t subtitleSubsampleNumber{0};
+	uint8_t subtitleLastSubsampleNumber{0};
 	uint8_t subtitleDataType{0};
-	uint16_t subtitleSubsampleNumber{0};
-	uint16_t subtitleLastSubsampleNumber{0};
 };
 
 class MmtStream;

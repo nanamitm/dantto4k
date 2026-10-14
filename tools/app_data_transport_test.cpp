@@ -168,7 +168,19 @@ static void testItemSections() {
 static void testCaptionSections() {
     const std::vector<uint8_t> ttml = { '<', 't', 't', '/', '>' };
     const uint64_t pts = 0x1ABCDEF01ULL; // 33 bits
-    auto sections = MmtTlv::AppDataTransport::buildCaptionSections(0x30, 0, 0b0010, pts, ttml, 7);
+    MmtTlv::AppDataTransport::Caption caption;
+    caption.componentTag = 0x30;
+    caption.dataType = 0;
+    caption.tmd = 0b0010;
+    caption.pts90k = pts;
+    caption.languageCode = { 'e', 'n', 'g' };
+    caption.resolution = 1;
+    caption.referenceStartTimeSeconds = 0xEA000001;
+    caption.referenceStartTimeFraction = 0x80000000;
+    caption.subtitleSequenceNumber = 9;
+    caption.subsampleNumber = 0;
+    caption.lastSubsampleNumber = 2;
+    auto sections = MmtTlv::AppDataTransport::buildCaptionSections(caption, ttml, 7);
     require(sections.size() == 1, "caption fits one section");
     const auto& s = sections[0];
     require(s[0] == MmtTlv::AppDataTransport::kCaptionTableId, "caption table_id");
@@ -178,9 +190,17 @@ static void testCaptionSections() {
     const uint64_t got = (uint64_t(s[13]) << 32) | (uint32_t(s[14]) << 24) | (s[15] << 16) | (s[16] << 8) | s[17];
     require(got == pts, "pts");
     require(((uint32_t(s[18]) << 24) | (s[19] << 16) | (s[20] << 8) | s[21]) == ttml.size(), "data_size");
-    require(std::equal(ttml.begin(), ttml.end(), s.begin() + 22), "caption payload");
+    // Extension: length, language, resolution, reference start time, MFU header numbers.
+    require(s[22] == 15, "extension length");
+    require(s[23] == 'e' && s[24] == 'n' && s[25] == 'g' && s[26] == 1, "language and resolution");
+    require(s[27] == 0xEA && s[30] == 0x01 && s[31] == 0x80 && s[34] == 0x00, "reference start time");
+    require(s[35] == 9 && s[36] == 0 && s[37] == 2, "sequence and subsample numbers");
+    require(std::equal(ttml.begin(), ttml.end(), s.begin() + 38), "caption payload");
 
-    sections = MmtTlv::AppDataTransport::buildCaptionSections(0x30, 6, 0b1111, std::nullopt, ttml, 8);
+    caption.dataType = 6;
+    caption.tmd = 0b1111;
+    caption.pts90k = std::nullopt;
+    sections = MmtTlv::AppDataTransport::buildCaptionSections(caption, ttml, 8);
     require(sections[0][12] == 0x00 && sections[0][10] == 6, "resource without pts");
 
     // Captions follow the stpp asset's packet_id to an application service only.
@@ -188,10 +208,12 @@ static void testCaptionSections() {
     int sent = 0;
     transport.setSectionCallback([&](uint16_t, const uint8_t*, size_t) { sent++; });
     transport.onMpt(0x0065, mpt(0x0065, true, MmtTlv::AssetType::stpp, 0xF330));
-    transport.onCaption(0xF330, 0x30, 0, 0b0010, pts, ttml);
+    caption.dataType = 0;
+    caption.pts90k = pts;
+    transport.onCaption(0xF330, caption, ttml);
     require(sent == 1, "caption of an application service is sent");
     transport.onMpt(0x0041, mpt(0x0041, false, MmtTlv::AssetType::stpp, 0xF331));
-    transport.onCaption(0xF331, 0x30, 0, 0b0010, pts, ttml);
+    transport.onCaption(0xF331, caption, ttml);
     require(sent == 1, "caption of a service without applications is not sent");
 }
 

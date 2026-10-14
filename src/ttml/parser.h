@@ -32,7 +32,9 @@ struct ParseResult {
     }
 };
 
-[[nodiscard]] ParseResult parse(std::string_view xml, SyncMode mode);
+// With ignore_timing, begin and end are not read: ARIB TR-B39 8.5.9.2 has them
+// ignored when the TMD is 1111 (no time control), captions included.
+[[nodiscard]] ParseResult parse(std::string_view xml, SyncMode mode, bool ignore_timing = false);
 
 } // namespace ttml
 
