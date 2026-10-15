@@ -1264,8 +1264,12 @@ void RemuxerHandler::onMpt(const MmtTlv::Mpt& mpt) {
                     continue;
                 }
 
+                // Captions are 0x30-0x37 and superimpositions 0x38-0x3F (ARIB
+                // STD-B60). Both are written as PES (writeSubtitle), so both
+                // belong in the PMT: receivers look the superimposition PID up
+                // here, and recorders keep only the PIDs listed.
                 if (asset.assetType == MmtTlv::AssetType::stpp &&
-                    (mmtStream->getComponentTag() < 0x30 || mmtStream->getComponentTag() > 0x37)) {
+                    !mmtStream->isClosedCaption() && !mmtStream->isSuperimposition()) {
                     continue;
                 }
 
