@@ -63,11 +63,14 @@ public:
     void onMpt(uint16_t serviceId, const Mpt& mpt);
     // True once the service's MPT carried an application service descriptor.
     bool hasApplicationService(uint16_t serviceId) const;
+    // True when the service has anything to send: applications, or captions
+    // (receivers can show the ARIB-TTML documents themselves even when the
+    // service broadcasts no application).
+    bool carriesAppData(uint16_t serviceId) const;
 
     void onTableSection(uint16_t packetId, const uint8_t* data, size_t size, uint64_t now90k);
     void onApplicationData(const MmtStream& mmtStream, const Mpu& mpu, const DataUnit& dataUnit, const MfuData& mfuData, uint64_t now90k);
-    // Hands a caption document or resource of an application service to the
-    // TS side unchanged.
+    // Hands a caption document or resource to the TS side unchanged.
     void onCaption(uint16_t packetId, const Caption& caption, const std::vector<uint8_t>& data);
     void clear();
 
@@ -94,6 +97,8 @@ private:
     // MMT packet_id -> service_id, rebuilt from each MPT.
     std::unordered_map<uint16_t, uint16_t> packetIdToService;
     std::unordered_set<uint16_t> applicationServices;
+    // Services whose MPT lists a caption (stpp) asset.
+    std::unordered_set<uint16_t> captionServices;
     // EMT packet_id -> EMT_tag
     std::unordered_map<uint16_t, uint8_t> packetIdToEmtTag;
 

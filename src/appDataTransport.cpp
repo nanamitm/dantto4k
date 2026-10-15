@@ -53,6 +53,7 @@ void AppDataTransport::onMpt(uint16_t serviceId, const Mpt& mpt) {
     std::erase_if(packetIdToService, [&](const auto& entry) { return entry.second == serviceId; });
     std::erase_if(packetIdToEmtTag, [&](const auto& entry) { return !packetIdToService.contains(entry.first); });
     applicationServices.erase(serviceId);
+    captionServices.erase(serviceId);
 
     auto route = [&](const MmtGeneralLocationInfo& locationInfo) {
         if (locationInfo.locationType == 0) {
@@ -78,11 +79,16 @@ void AppDataTransport::onMpt(uint16_t serviceId, const Mpt& mpt) {
         }
     }
 
-    // Applications get the service's captions as well (addCaptionListener).
+    // Applications get the service's captions as well (addCaptionListener),
+    // and receivers may show them as they are. Captions are sent for services
+    // without applications too.
     for (const auto& asset : mpt.assets) {
         if (asset.assetType != static_cast<uint32_t>(AssetType::aapp) &&
             asset.assetType != static_cast<uint32_t>(AssetType::stpp)) {
             continue;
+        }
+        if (asset.assetType == static_cast<uint32_t>(AssetType::stpp)) {
+            captionServices.insert(serviceId);
         }
         for (const auto& locationInfo : asset.locationInfos) {
             route(locationInfo);
@@ -92,6 +98,10 @@ void AppDataTransport::onMpt(uint16_t serviceId, const Mpt& mpt) {
 
 bool AppDataTransport::hasApplicationService(uint16_t serviceId) const {
     return applicationServices.contains(serviceId);
+}
+
+bool AppDataTransport::carriesAppData(uint16_t serviceId) const {
+    return applicationServices.contains(serviceId) || captionServices.contains(serviceId);
 }
 
 const uint16_t* AppDataTransport::findService(uint16_t packetId) const {
@@ -169,7 +179,7 @@ void AppDataTransport::onCaption(uint16_t packetId, const Caption& caption, cons
         return;
     }
     const uint16_t* serviceId = findService(packetId);
-    if (!serviceId || !hasApplicationService(*serviceId)) {
+    if (!serviceId || !captionServices.contains(*serviceId)) {
         unroutedCount++;
         return;
     }
@@ -282,6 +292,7 @@ void AppDataTransport::clear() {
     packetIdToService.clear();
     packetIdToEmtTag.clear();
     applicationServices.clear();
+    captionServices.clear();
     lastSent.clear();
     assembler.clear();
 }

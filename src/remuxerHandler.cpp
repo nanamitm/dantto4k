@@ -353,8 +353,8 @@ void RemuxerHandler::convertAndWriteSubtitle(const MmtTlv::MmtStream& mmtStream,
 }
 
 // Data broadcasting applications read captions themselves (addCaptionListener),
-// so the ARIB-TTML documents and their resources go to the app data PID as they
-// are. A document carries the PTS its time zero maps to, chosen like the B24
+// and receivers can show them without the B24 conversion, so the ARIB-TTML
+// documents and their resources go to the app data PID as they are. A document carries the PTS its time zero maps to, chosen like the B24
 // conversion does; resources are used as soon as they arrive.
 void RemuxerHandler::forwardCaptionToApplication(const MmtTlv::MmtStream& mmtStream, const MmtTlv::MfuData& mfuData,
     const MmtTlv::AdditionalAribSubtitleInfo& subtitleInfo) {
@@ -1354,8 +1354,8 @@ void RemuxerHandler::onMpt(const MmtTlv::Mpt& mpt) {
         }
     }
 
-    if (config.appDataTransport && appDataTransport.hasApplicationService(serviceId)) {
-        // Data broadcasting as private sections. No stream identifier
+    if (config.appDataTransport && appDataTransport.carriesAppData(serviceId)) {
+        // Data broadcasting and captions as private sections. No stream identifier
         // descriptor: web-bml only looks at components that have one.
         ts::PMT::Stream stream(&tsPmt, StreamType::PRIVATE_SECTION);
         ts::RegistrationDescriptor descriptor;
