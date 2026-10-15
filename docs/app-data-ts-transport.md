@@ -28,7 +28,8 @@ MH-AIT・DDMT・DAMT・DCCT) をすべて捨てている。TVTDataBroadcastingWV
 
 - 既存の PID 割り当て (0x100 + component_tag、0x200 + index、PCR 0x01FF、PMT 0x1000〜) とは重ならない。
 - `stream_type 0x0D` や data_component_descriptor は使わない。BML 用の受信機 (web-bml) が BML と誤認しないようにするため。
-- そのサービスの MPT にアプリケーションサービス記述子 (後述) がない間は、PMT にこの ES を載せない。
+- そのサービスの MPT にアプリケーションサービス記述子 (後述) も字幕 (stpp) アセットもない間は、PMT にこの ES を載せない。
+  字幕だけのサービス (BS-TBS 4K、BS 朝日 4K など) では字幕 (table_id 0xC1) だけが流れる。
 
 ## セクション形式
 
@@ -77,8 +78,9 @@ CRC_32                       32
 ### 3. 字幕 (table_id = 0xC1、dantto4k 独自)
 
 データ放送のアプリケーションは、`addCaptionListener` で字幕を自分で受け取って表示する
-(NHK BSP4K の字幕ページなど)。そのため、アプリケーションサービス記述子のあるサービスでは、
-字幕 (stpp アセット) の MFU も変換せずにそのまま送る。分割の仕方はアイテムと同じ。
+(NHK BSP4K の字幕ページなど)。そのため、字幕 (stpp アセット) の MFU も変換せずにそのまま送る。
+受信側が B24 に変換していない字幕を直接表示できるよう、アプリケーションサービス記述子のないサービスでも送る。
+分割の仕方はアイテムと同じ。
 
 ```
 -- 先頭セクション (section_number == 0) のみ --
@@ -199,7 +201,7 @@ emt_section_byte              N   EMT (table_id 0xA6) のセクション全体 (
 | 設定 | ini の `[appdata]` (`enable`、`itemResendInterval`)、dantto4k の `--no-app-data` |
 
 - 振り分けは MPT ごとに作り直す。アプリケーションサービス記述子にある MH-AIT・データ伝送メッセージ・EMT の
-  packet_id と、aapp アセットの packet_id を、その MPT のサービスに対応付ける。対応のない packet_id のものは捨てる。
+  packet_id と、aapp・stpp アセットの packet_id を、その MPT のサービスに対応付ける。対応のない packet_id のものは捨てる。
 - 間引きは内容のハッシュで行う。テーブルはサービスとセクションのバイト列、アイテムはサービス・component_tag・
   mpu_sequence_number・item_id・内容をキーにする。同じキーは、テーブルは 1 秒、アイテムは `itemResendInterval` 秒
   (既定 10) 経つまで送らない。時刻は PCR から取る。PCR が戻った場合は経過したものとして送る。

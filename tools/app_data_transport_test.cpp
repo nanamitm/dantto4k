@@ -253,7 +253,7 @@ static void testCaptionSections() {
     sections = MmtTlv::AppDataTransport::buildCaptionSections(caption, ttml, 8);
     require(sections[0][12] == 0x00 && sections[0][10] == 6, "resource without pts");
 
-    // Captions follow the stpp asset's packet_id to an application service only.
+    // Captions follow the stpp asset's packet_id, with or without applications.
     MmtTlv::AppDataTransport transport;
     int sent = 0;
     transport.setSectionCallback([&](uint16_t, const uint8_t*, size_t) { sent++; });
@@ -262,9 +262,18 @@ static void testCaptionSections() {
     caption.pts90k = pts;
     transport.onCaption(0xF330, caption, ttml);
     require(sent == 1, "caption of an application service is sent");
+    require(transport.carriesAppData(0x0065), "application service carries app data");
     transport.onMpt(0x0041, mpt(0x0041, false, MmtTlv::AssetType::stpp, 0xF331));
+    require(!transport.hasApplicationService(0x0041) && transport.carriesAppData(0x0041), "caption-only service carries app data");
     transport.onCaption(0xF331, caption, ttml);
-    require(sent == 1, "caption of a service without applications is not sent");
+    require(sent == 2, "caption of a service without applications is sent");
+    transport.onCaption(0xF332, caption, ttml);
+    require(sent == 2, "caption of an unknown packet_id is not sent");
+    transport.onMpt(0x0042, mpt(0x0042, false));
+    require(!transport.carriesAppData(0x0042), "service without applications or captions carries nothing");
+    transport.onMpt(0x0041, mpt(0x0041, false));
+    transport.onCaption(0xF331, caption, ttml);
+    require(sent == 2 && !transport.carriesAppData(0x0041), "routing follows the latest MPT");
 }
 
 int main() {
