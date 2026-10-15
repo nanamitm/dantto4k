@@ -27,6 +27,16 @@
 #include <io.h>
 #endif
 
+// The version this build comes from. The Visual Studio projects write the
+// header before building (tools/generate-version-header.ps1), the way
+// TVTest's TVTestVersionHashGen.bat does; other builds do without it.
+#if __has_include("dantto4kVersion.h")
+#include "dantto4kVersion.h"
+#endif
+#ifndef DANTTO4K_VERSION_STRING
+#define DANTTO4K_VERSION_STRING "unknown"
+#endif
+
 namespace {
 
 struct Args {
@@ -527,7 +537,7 @@ Args parseArguments(int argc, char* argv[]) {
     Args args;
 
     try {
-        cxxopts::Options options("dantto4k", "MMT/TLV to MPEG-2 TS Converter (https://github.com/nekohkr/dantto4k)");
+        cxxopts::Options options("dantto4k", "MMT/TLV to MPEG-2 TS Converter " DANTTO4K_VERSION_STRING " (https://github.com/nekohkr/dantto4k)");
 
         options.add_options()
             ("input", "Input file ('-' for stdin)", cxxopts::value<std::string>()->default_value(""))
@@ -555,6 +565,7 @@ Args parseArguments(int argc, char* argv[]) {
             ("probe-sample-limit", "Number of initial MFU samples to print per video stream", cxxopts::value<size_t>()->default_value("128"))
             ("no-progress", "Disable progress display", cxxopts::value<bool>()->default_value("false"))
             ("no-stats", "Disable packet statistics", cxxopts::value<bool>()->default_value("false"))
+            ("version", "Show the version")
             ("help", "Show help");
 
         options.parse_positional({ "input", "output" });
@@ -563,6 +574,10 @@ Args parseArguments(int argc, char* argv[]) {
 
         if (result.count("help")) {
             std::cout << options.help() << std::endl;
+            std::exit(0);
+        }
+        if (result.count("version")) {
+            std::cout << "dantto4k " DANTTO4K_VERSION_STRING << std::endl;
             std::exit(0);
         }
 
