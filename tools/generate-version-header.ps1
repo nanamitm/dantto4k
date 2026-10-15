@@ -2,10 +2,12 @@
 # TVTestVersionHashGen.bat does: a pre-build step runs it, the header is not
 # committed (.gitignore) and the sources include it with __has_include.
 #
-# The version is `git describe --tags --always --dirty`, e.g. "v20261015a"
-# for a tagged commit, "v20261015a-2-gce5bea5" two commits after it, with
-# "-dirty" when there are uncommitted changes, and "unknown" without git. The
-# header is rewritten only when it changes, so it does not cause rebuilds.
+# The version is `git describe --tags --always`, e.g. "v20261015a" for a
+# tagged commit, "v20261015a-2-gce5bea5" two commits after it, with "-dirty"
+# when there are uncommitted changes, and "unknown" without git. Changes inside
+# submodules (building TSDuck writes into it, for one) do not count; a
+# submodule moved to another commit does. The header is rewritten only when it
+# changes, so it does not cause rebuilds.
 #
 #   #define <Name>_VERSION_STRING   "v20261015a-2-gce5bea5"
 #   #define <Name>_VERSION_STRING_W L"v20261015a-2-gce5bea5"
@@ -18,9 +20,13 @@ $ErrorActionPreference = 'Stop'
 
 $version = $null
 try {
-    $output = & git -C $PSScriptRoot describe --tags --always --dirty 2>$null
+    $output = & git -C $PSScriptRoot describe --tags --always 2>$null
     if ($LASTEXITCODE -eq 0 -and $output) {
         $version = "$output".Trim()
+        $changes = & git -C $PSScriptRoot status --porcelain --untracked-files=no --ignore-submodules=dirty 2>$null
+        if ($LASTEXITCODE -ne 0 -or $changes) {
+            $version += '-dirty'
+        }
     }
 }
 catch {
