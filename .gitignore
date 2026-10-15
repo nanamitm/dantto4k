@@ -8,3 +8,4 @@ dantto4k_dev.sln
 *.exe
 msvc/generated/
 work/regression-tests/
+src/dantto4kVersion.h

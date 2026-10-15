@@ -155,8 +155,10 @@
       <AdditionalManifestFiles>utf8.manifest</AdditionalManifestFiles>
     </Manifest>
     <PreBuildEvent>
-      <Command>powershell -NoProfile -ExecutionPolicy Bypass -File "$(ProjectDir)generate-tsduck-names.ps1" -OutFile "$(ProjectDir)generated\tsduck.dtv.names"</Command>
-      <Message>Generating tsduck.dtv.names</Message>
+      <Command>powershell -NoProfile -ExecutionPolicy Bypass -File "$(ProjectDir)generate-tsduck-names.ps1" -OutFile "$(ProjectDir)generated\tsduck.dtv.names"
+if errorlevel 1 exit /b 1
+powershell -NoProfile -ExecutionPolicy Bypass -File "$(ProjectDir)..\tools\generate-version-header.ps1" -OutFile "$(ProjectDir)..\src\dantto4kVersion.h" -Name DANTTO4K</Command>
+      <Message>Generating tsduck.dtv.names and dantto4kVersion.h</Message>
     </PreBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>

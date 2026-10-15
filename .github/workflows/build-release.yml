@@ -20,6 +20,8 @@ jobs:
         uses: actions/checkout@v6
         with:
           submodules: recursive
+          # The build embeds `git describe --tags`, which needs the history and tags.
+          fetch-depth: 0
 
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v3

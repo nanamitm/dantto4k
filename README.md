@@ -24,6 +24,7 @@ Usage:
       --mmtsmap arg             Specify .mmtsmap output path
       --no-progress             Disable progress display
       --no-stats                Disable packet statistics
+      --version                 Show the version
       --help                    Show help
 ```
 
@@ -131,6 +132,8 @@ git submodule update --init --recursive
 Visual Studio 2022 以降で `msvc/dantto4k.sln` を開いてビルドします。
 
 初回ビルド時に tsduck の静的ライブラリ（`tscorelib.lib` / `tsducklib.lib`）が自動的にビルドされます（10分程度）。2回目以降はライブラリが存在するためスキップされます。
+
+ビルドの前に `tools/generate-version-header.ps1` が `git describe --tags --always --dirty` の結果 (例: `v20261015a-2-gce5bea5`) を `src/dantto4kVersion.h` に書き出します (コミットしないファイルです)。この版は `dantto4k --version` と、dantto4k.exe・BonDriver_dantto4k.dll のファイルのプロパティ (詳細タブ) で確認できます。git が無い環境では `unknown` になります。
 
 > **Note**
 > TSDuck インストーラーは不要です。`TSDUCK` 環境変数も使用しません。
