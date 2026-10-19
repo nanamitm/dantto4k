@@ -1,6 +1,6 @@
 param(
-    [ValidateSet('paths', 'acas', 'casproxy', 'demux', 'mmtp', 'bontuner', 'ttml', 'appdata', 'recorder', 'output')]
-    [string[]]$Tests = @('paths', 'acas', 'casproxy', 'demux', 'mmtp', 'bontuner', 'ttml', 'appdata', 'recorder', 'output'),
+    [ValidateSet('paths', 'acas', 'casproxy', 'demux', 'mmtp', 'audio', 'bontuner', 'ttml', 'appdata', 'recorder', 'output')]
+    [string[]]$Tests = @('paths', 'acas', 'casproxy', 'demux', 'mmtp', 'audio', 'bontuner', 'ttml', 'appdata', 'recorder', 'output'),
     [switch]$SkipBuild
 )
 $ErrorActionPreference = 'Stop'
@@ -18,7 +18,7 @@ $tsduck = "$repo\thirdparty\tsduck"
 $buildDir = "$repo\work\regression-tests"
 New-Item -ItemType Directory -Force $buildDir | Out-Null
 $includeDirs = @("$repo\src", "$repo\thirdparty\asio\asio\include", "$tsduck\bin\include")
-if ($Tests -contains 'bontuner') {
+if ($Tests -contains 'bontuner' -or $Tests -contains 'audio') {
     foreach ($library in @('libtscore', 'libtsduck')) {
         $includeDirs += Get-ChildItem "$tsduck\src\$library" -Recurse -Filter '*.h' |
             Where-Object { $_.DirectoryName -notmatch '\\(unix|linux|mac|bsd|private|__pycache__)(\\|$)' } |
@@ -40,6 +40,7 @@ try {
             casproxy { 'cas_proxy_safety_test' }
             demux { 'demux_safety_test' }
             mmtp { 'mmtp_extension_test' }
+            audio { 'audio_transport_test' }
             bontuner { 'bontuner_safety_test' }
             ttml { 'ttml_test' }
             appdata { 'app_data_transport_test' }
@@ -52,7 +53,8 @@ try {
             casproxy { Get-Item "$objectDir\casProxyClient.obj" }
             default {
                 $excluded = @('dantto4k', 'dllmain')
-                if ($test -ne 'bontuner') { $excluded += @('bonTuner', 'remuxerHandler', 'tsduckNames') }
+                if ($test -ne 'bontuner') { $excluded += 'bonTuner' }
+                if ($test -notin @('bontuner', 'audio')) { $excluded += @('remuxerHandler', 'tsduckNames') }
                 Get-ChildItem $objectDir -Filter '*.obj' | Where-Object { $_.BaseName -notin $excluded }
             }
         }
@@ -63,7 +65,7 @@ try {
         $compilerArgs += '"' + "$PSScriptRoot\$name.cpp" + '"'
         $compilerArgs += $objects | ForEach-Object { '"' + $_.FullName + '"' }
         $compilerArgs += @("/Fe:$name.exe", '/link', 'winscard.lib', 'gdi32.lib', 'user32.lib')
-        if ($test -eq 'bontuner') {
+        if ($test -in @('bontuner', 'audio')) {
             $compilerArgs += @('/LIBPATH:"' + "$tsduck\bin\Release-x64" + '"',
                 'tsducklib.lib', 'tscorelib.lib', '/wholearchive:tsducklib.lib', '/wholearchive:tscorelib.lib',
                 'ole32.lib', 'oleaut32.lib', 'advapi32.lib')

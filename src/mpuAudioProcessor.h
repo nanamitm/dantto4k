@@ -9,8 +9,7 @@ public:
 	void clear() override;
 
 private:
-	size_t aacFrameSize{0};
-	size_t aacFragmentOffset{0};
+	std::optional<std::pair<int64_t, int64_t>> frameTimestamps;
 	std::vector<uint8_t> aacFragment;
 
 };
