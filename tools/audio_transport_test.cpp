@@ -159,12 +159,36 @@ static void testRecovery() {
     audio(demux,6,FragmentationIndicator::NotFragmented,raw);
     packets=pesPackets(output,demux.getStream(0x100)->getMpeg2PacketId());require(packets.size()==1,"audio must recover after an oversized frame");checkPes(packets[0],expectedAudio(false),95760);
 }
+// STD-B60 8.2.1: the LOAS length is the MFU size, so trailing bytes after the
+// payload and frames that reuse the previous StreamMuxConfig must pass.
+static void testLenientFrames() {
+    for(bool loas : {false,true}) {
+        config.disableADTSConversion=loas; MmtTlvDemuxer demux;RemuxerHandler remux(demux);demux.setDemuxerHandler(remux);registerAudio(demux);
+        std::vector<uint8_t> output;remux.setOutputCallback([&](const uint8_t* p,size_t n){output.insert(output.end(),p,p+n);});
+        auto padded=rawAudio();padded.push_back(0);
+        audio(demux,1,FragmentationIndicator::FirstFragment,{padded.begin(),padded.begin()+4});
+        audio(demux,2,FragmentationIndicator::LastFragment,{padded.begin()+4,padded.end()});
+        auto packets=pesPackets(output,demux.getStream(0x100)->getMpeg2PacketId());require(packets.size()==1,"padded frame must survive");
+        std::vector<uint8_t> expected=expectedAudio(false);
+        if(loas){expected={0x56,0xE0,static_cast<uint8_t>(padded.size())};expected.insert(expected.end(),padded.begin(),padded.end());}
+        checkPes(packets[0],expected,90000);
+    }
+    config.disableADTSConversion=true; MmtTlvDemuxer demux;RemuxerHandler remux(demux);demux.setDemuxerHandler(remux);registerAudio(demux);
+    std::vector<uint8_t> output;remux.setOutputCallback([&](const uint8_t* p,size_t n){output.insert(output.end(),p,p+n);});
+    // useSameStreamMux=1, PayloadLengthInfo=3, payload AA BB CC.
+    const std::vector<uint8_t> same={0x81,0xD5,0x5D,0xE6,0x00};
+    audio(demux,1,FragmentationIndicator::NotFragmented,same);
+    audio(demux,2,FragmentationIndicator::NotFragmented,{same.begin(),same.end()-1});
+    auto packets=pesPackets(output,demux.getStream(0x100)->getMpeg2PacketId());
+    require(packets.size()==1,"useSameStreamMux frame must survive and its truncation must not");
+    std::vector<uint8_t> expected={0x56,0xE0,5};expected.insert(expected.end(),same.begin(),same.end());checkPes(packets[0],expected,90000);
+}
 int main() {
  try {
     for(size_t split=1;split<rawAudio().size();++split) {
         testSplit(split,false,false);testSplit(split,true,false);testSplit(split,false,true);
     }
-    testRecovery();testMiddleAndMalformed();testMaximumFrame();testMultiServicePmtAndMap();
+    testRecovery();testMiddleAndMalformed();testMaximumFrame();testMultiServicePmtAndMap();testLenientFrames();
     std::puts("PASS: fragmented ADTS/LOAS audio, 22.2ch routing, timestamps, PES lengths and loss/size recovery");return 0;
  } catch(const std::exception& e){std::fprintf(stderr,"FAIL: %s\n",e.what());return 1;}
 }

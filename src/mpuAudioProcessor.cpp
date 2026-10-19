@@ -32,8 +32,10 @@ MfuProcessResult MpuAudioProcessor::process(MmtStream& mmtStream, const std::vec
 
     // A fragment can end inside the LATM header or its length field. Parse only
     // the complete MFU, and never send partial LOAS frames to ADTSConverter/PES.
+    // STD-B60 8.2.1: the MFU is the whole AudioMuxElement, so it sets the LOAS
+    // length. Trailing bytes (otherData, padding) are legal; a short one is not.
     const auto size = AACUtils::getFrameSize(aacFragment.data(), aacFragment.size());
-    if (!size || static_cast<size_t>(*size) != aacFragment.size()) {
+    if (!size || static_cast<size_t>(*size) > aacFragment.size()) {
         clear();
         return MfuProcessResult::dropped();
     }

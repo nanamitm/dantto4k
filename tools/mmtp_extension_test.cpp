@@ -54,9 +54,21 @@ int main() {
     require(p.unpack(o) && !p.extensionHeaderScrambling && !p.scramblingFlagsOffset, "unknown outer extension must not be parsed as multi-type");
     auto plain=packet({},0,false); Common::ReadStream n(plain);
     require(p.unpack(n) && !p.extensionHeaderScrambling && !p.scramblingFlagsOffset, "reused parser must not keep scrambling state");
-    for (const std::vector<uint8_t> bad : {std::vector<uint8_t>{0x80,1,0,2,0x10}, {0x80,1,0,0}, {0x80,1,0}, {0,1,0,1,0x10,0x80,1,0,1,0x10}}) {
-        auto bytes=packet(bad); Common::ReadStream r(bytes); require(!p.unpack(r), "invalid/ambiguous multi-type lengths must be rejected");
+    // Malformed elements end extension parsing but must not drop the packet.
+    for (const std::vector<uint8_t> bad : {std::vector<uint8_t>{0x80,1,0,2,0x10}, {0x80,1,0,0}, {0x80,1,0}}) {
+        auto bytes=packet(bad); Common::ReadStream r(bytes);
+        require(p.unpack(r) && !p.extensionHeaderScrambling && !p.scramblingFlagsOffset && p.payload == std::vector<uint8_t>{0x42},
+                "malformed multi-type elements must keep the payload without scrambling info");
     }
-    std::puts("PASS: MMTP multi-type parsing, reuse, length validation and decoded dump patching"); return 0;
+    const std::vector<uint8_t> twice = {0,1,0,1,0x10, 0x80,1,0,1,0x18};
+    auto twiceBytes=packet(twice); Common::ReadStream t(twiceBytes);
+    require(p.unpack(t) && p.extensionHeaderScrambling && p.extensionHeaderScrambling->encryptionFlag == EncryptionFlag::EVEN &&
+            p.scramblingFlagsOffset == 4, "the first scrambling element must win");
+    checkDump(twice,4);
+    const std::vector<uint8_t> truncatedTail = {0,1,0,1,0x14, 0,2,0};
+    auto tailBytes=packet(truncatedTail); Common::ReadStream tail(tailBytes);
+    require(p.unpack(tail) && p.extensionHeaderScrambling && p.scramblingFlagsOffset == 4 && p.payload == std::vector<uint8_t>{0x42},
+            "a truncated element after the scrambling element must not discard it");
+    std::puts("PASS: MMTP multi-type parsing, reuse, lenient malformed lengths and decoded dump patching"); return 0;
  } catch(const std::exception& e) { std::fprintf(stderr,"FAIL: %s\n",e.what()); return 1; }
 }

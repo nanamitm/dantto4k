@@ -50,24 +50,25 @@ bool Mmtp::unpack(Common::ReadStream& stream) {
 
             // STD-B60 Table 6-8: extension_type=0 contains a sequence of
             // independently typed/length-delimited elements, in any order.
+            // A malformed extension area only ends element parsing: the MMTP
+            // header length is already validated, so the payload stays usable.
             if (extensionHeaderType == 0) {
                 Common::ReadStream extensions(extensionHeaderField);
-                while (!extensions.isEof()) {
+                while (extensions.leftBytes() >= 4) {
                     const auto type = extensions.getBe16U();
                     const auto length = extensions.getBe16U();
-                    Common::ReadStream element(extensions, length);
-                    if ((type & 0x7FFF) == 1) {
-                        // Multiple scrambling elements would make the flags
-                        // to decrypt/patch ambiguous. Do not guess.
-                        if (extensionHeaderScrambling) {
-                            return false;
-                        }
+                    if (length > extensions.leftBytes()) {
+                        break;
+                    }
+                    // STD-B61 3.2.8 carries one scrambling element per packet.
+                    // Use the first, so decryption and the dump patch agree.
+                    if ((type & 0x7FFF) == 1 && !extensionHeaderScrambling) {
+                        Common::ReadStream element(extensions, length);
                         ExtensionHeaderScrambling scrambling;
-                        if (!scrambling.unpack(element, extensionHeaderType, length)) {
-                            return false;
+                        if (scrambling.unpack(element, extensionHeaderType, length)) {
+                            scramblingFlagsOffset = extensions.getPos();
+                            extensionHeaderScrambling = scrambling;
                         }
-                        scramblingFlagsOffset = extensions.getPos();
-                        extensionHeaderScrambling = scrambling;
                     }
                     extensions.skip(length);
                     if (type & 0x8000) {
