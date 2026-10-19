@@ -1,6 +1,7 @@
 #pragma once
 #include <vector>
 #include <map>
+#include <set>
 #include <list>
 #include <functional>
 #include <ostream>
@@ -100,6 +101,8 @@ private:
 	std::map<uint16_t, std::unique_ptr<FragmentAssembler>> mapAssembler;
 	std::map<uint16_t, std::unique_ptr<FragmentValidator>> mapFragmentValidator;
 	std::map<uint16_t, uint16_t> mapPacketIdByIdx;
+	// Each complete MPT owns only its package, not every stream in the multiplex.
+	std::map<std::vector<uint8_t>, std::set<uint16_t>> packagePacketIds;
 
 	Tlv tlv;
 	CompressedIPPacket compressedIPPacket;

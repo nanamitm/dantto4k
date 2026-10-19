@@ -53,6 +53,8 @@ public:
 	std::vector<uint8_t> payload;
 
 	std::optional<ExtensionHeaderScrambling> extensionHeaderScrambling;
+	// Byte offset of the flags within extensionHeaderField, for decoded TLV output.
+	std::optional<size_t> scramblingFlagsOffset;
 
 };
 

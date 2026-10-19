@@ -19,18 +19,21 @@ public:
     void onEcm(const MmtTlv::Ecm&) override { ++ecmCount; }
 };
 
-static std::vector<uint8_t> mpt(uint16_t packetId, bool truncated, uint32_t asset = MmtTlv::AssetType::hev1) {
+static std::vector<uint8_t> mpt(uint16_t packetId, bool truncated, uint32_t asset = MmtTlv::AssetType::hev1, uint16_t service = 1, int tag = -1) {
     MmtTlv::Common::WriteStream out;
     out.put8U(0x20); // MPT
     out.put8U(0); out.putBe16U(0); out.put8U(0);
-    out.put8U(2); out.putBe16U(1); // package ID
+    out.put8U(2); out.putBe16U(service); // package ID
     out.putBe16U(0); // descriptors
     out.put8U(truncated ? 2 : 1); // missing second asset in damaged input
     out.put8U(0); out.putBe32U(0); out.put8U(0);
     out.putBe32U(asset);
     out.put8U(0); out.put8U(1);
     out.put8U(0); out.putBe16U(packetId);
-    out.putBe16U(0);
+    out.putBe16U(tag < 0 ? 0 : 5);
+    if (tag >= 0) {
+        out.putBe16U(0x8011); out.put8U(2); out.putBe16U(static_cast<uint16_t>(tag));
+    }
     return out.getData();
 }
 
@@ -110,6 +113,41 @@ int main() {
         app(fragmentDemux, 3, 2, 2);
         app(fragmentDemux, 4, 2, 3);
         require(fragments.appCount == 4, "new fragmented MPU and its continuations must remain usable");
+        Handler multiplexHandler;
+        MmtTlv::MmtTlvDemuxer multiplex;
+        multiplex.setDemuxerHandler(multiplexHandler);
+        auto first = mpt(0x100, false, MmtTlv::AssetType::hev1, 1, 0);
+        auto second = mpt(0x200, false, MmtTlv::AssetType::hev1, 2, 0);
+        feed(multiplex, first, 1);
+        auto* retained = multiplex.getStream(0x100);
+        const auto index = retained->getStreamIndex();
+        const auto pid = retained->getMpeg2PacketId();
+        feed(multiplex, second, 2);
+        require(multiplex.getStream(0x100) == retained && multiplex.getStream(0x200),
+                "another package must not remove an existing service");
+        require(multiplex.getStreamByIdx(index) == retained &&
+                multiplex.getStream(0x200)->getStreamIndex() != index &&
+                multiplex.getStream(0x200)->getMpeg2PacketId() != pid,
+                "services with identical component tags need unique indices and TS PIDs");
+        feed(multiplex, first, 3);
+        require(retained->getStreamIndex() == index && retained->getMpeg2PacketId() == pid,
+                "periodic MPT must keep stream indices and PIDs stable");
+        feed(multiplex, mpt(0x300, false, MmtTlv::AssetType::hev1, 1), 4);
+        require(!multiplex.getStream(0x100) && multiplex.getStream(0x200) && multiplex.getStream(0x300),
+                "only assets removed from the updated package may be removed");
+        feed(multiplex, mpt(0x300, false, MmtTlv::AssetType::hev1, 2), 5);
+        auto emptyFirst = first; emptyFirst.resize(11); emptyFirst[10] = 0;
+        feed(multiplex, emptyFirst, 6);
+        require(multiplex.getStream(0x300) && !multiplex.getStream(0x200),
+                "shared assets survive until their last package removes them");
+        auto emptySecond = emptyFirst; emptySecond[7] = 2;
+        feed(multiplex, emptySecond, 7);
+        require(multiplex.mapStream.empty() && !multiplex.getStreamByIdx(index),
+                "an empty complete MPT must remove the last owned assets");
+        multiplex.clear();
+        feed(multiplex, second, 1);
+        require(multiplex.getStream(0x200)->getStreamIndex() == 0,
+                "clear must reset package ownership and stream indices");
         std::puts("PASS: malformed MPT/ECM rejection and MPU fragment recovery across consecutive, skipped and backward sequences");
         return 0;
     } catch (const std::exception& e) {

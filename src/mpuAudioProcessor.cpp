@@ -1,88 +1,60 @@
 #include "mpuAudioProcessor.h"
 #include "mmtStream.h"
 #include "adtsConverter.h"
-#include <fstream>
 
 namespace MmtTlv {
 
-// The re-muxed LOAS AudioSyncStream header below encodes the frame length in a
-// 13-bit audioMuxLengthBytes field (max 8191). Accepting a larger frame would
-// truncate that length and corrupt the stream, so cap at the format limit. (The
-// previous 10 KiB value allowed 8192-10240 byte frames that would be silently
-// mangled.) Frames above this are dropped rather than corrupted.
-constexpr int MAX_AAC_FRAME_SIZE = 8191;
+// LOAS audioMuxLengthBytes is 13 bits. Bound accumulation before copying.
+constexpr size_t MAX_AAC_FRAME_SIZE = 8191;
 
 MfuProcessResult MpuAudioProcessor::process(MmtStream& mmtStream, const std::vector<uint8_t>& data, FragmentationIndicator fragmentationIndicator) {
+    const bool first = fragmentationIndicator == FragmentationIndicator::FirstFragment ||
+        fragmentationIndicator == FragmentationIndicator::NotFragmented;
+    const bool last = fragmentationIndicator == FragmentationIndicator::LastFragment ||
+        fragmentationIndicator == FragmentationIndicator::NotFragmented;
+    if (first) {
+        clear();
+        try {
+            frameTimestamps = mmtStream.getNextPtsDts();
+        }
+        catch (const std::out_of_range&) {
+            return MfuProcessResult::dropped();
+        }
+    }
+    if (!frameTimestamps || data.size() > MAX_AAC_FRAME_SIZE - aacFragment.size()) {
+        clear();
+        return MfuProcessResult::dropped();
+    }
     aacFragment.insert(aacFragment.end(), data.begin(), data.end());
-
-    MfuData mfuData;
-    mfuData.streamIndex = mmtStream.getStreamIndex();
-
-    if (aacFrameSize == 0) {
-        auto ret = AACUtils::getFrameSize(aacFragment.data(), aacFragment.size());
-        if (!ret) {
-            clear();
-            return MfuProcessResult::dropped();
-        }
-        if (*ret > MAX_AAC_FRAME_SIZE) {
-            clear();
-            return MfuProcessResult::dropped();
-        }
-
-        aacFrameSize = *ret;
-
-        if (fragmentationIndicator == FragmentationIndicator::FirstFragment || fragmentationIndicator == FragmentationIndicator::NotFragmented) {
-            mfuData.isFirstFragment = true;
-
-            std::pair<int64_t, int64_t> ptsDts;
-            try {
-                ptsDts = mmtStream.getNextPtsDts();
-            }
-            catch (const std::out_of_range&) {
-                clear();
-                return MfuProcessResult::dropped();
-            }
-
-            mfuData.pts = ptsDts.first;
-            mfuData.dts = ptsDts.second;
-        }
-
-        mfuData.data.reserve(3 + aacFrameSize);
-
-        // Write LOAS Header
-        mfuData.data = {
-            0x56,
-            static_cast<uint8_t>(((aacFrameSize >> 8) & 0x1F) | 0xE0),
-            static_cast<uint8_t>(aacFrameSize & 0xFF)
-        };
+    if (!last) {
+        return MfuProcessResult::accumulating();
     }
 
-    const size_t remainingSize = aacFragment.size() - aacFragmentOffset;
-    const size_t copySize = std::min(remainingSize, aacFrameSize);
-    aacFrameSize -= copySize;
-
-    mfuData.data.insert(mfuData.data.end(),
-        aacFragment.begin() + aacFragmentOffset,
-        aacFragment.begin() + aacFragmentOffset + copySize);
-    aacFragmentOffset += copySize;
-
-    if (aacFrameSize == 0) {
-        mfuData.isLastFragment = true;
-        aacFragment.erase(aacFragment.begin(), aacFragment.begin() + aacFragmentOffset);
-        aacFragmentOffset = 0;
-
-        if (aacFragment.size() != 0) {
-            clear();
-            return MfuProcessResult::dropped();
-        }
+    // A fragment can end inside the LATM header or its length field. Parse only
+    // the complete MFU, and never send partial LOAS frames to ADTSConverter/PES.
+    // STD-B60 8.2.1: the MFU is the whole AudioMuxElement, so it sets the LOAS
+    // length. Trailing bytes (otherData, padding) are legal; a short one is not.
+    const auto size = AACUtils::getFrameSize(aacFragment.data(), aacFragment.size());
+    if (!size || static_cast<size_t>(*size) > aacFragment.size()) {
+        clear();
+        return MfuProcessResult::dropped();
     }
-
-    return MfuProcessResult::output(std::move(mfuData));
+    MfuData result;
+    result.streamIndex = mmtStream.getStreamIndex();
+    result.pts = frameTimestamps->first;
+    result.dts = frameTimestamps->second;
+    result.isFirstFragment = true;
+    result.isLastFragment = true;
+    result.data.reserve(3 + aacFragment.size());
+    result.data = {0x56, static_cast<uint8_t>(0xE0 | (aacFragment.size() >> 8)),
+        static_cast<uint8_t>(aacFragment.size())};
+    result.data.insert(result.data.end(), aacFragment.begin(), aacFragment.end());
+    clear();
+    return MfuProcessResult::output(std::move(result));
 }
 
 void MpuAudioProcessor::clear() {
-    aacFrameSize = 0;
-    aacFragmentOffset = 0;
+    frameTimestamps.reset();
     aacFragment.clear();
 }
 

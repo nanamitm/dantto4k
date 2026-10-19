@@ -166,33 +166,37 @@ bool ADTSConverter::unpackAudioSpecificConfig(uint8_t* input, size_t size) {
     return true;
 }
 
+// Returns the bytes AudioMuxElement(1) needs up to the end of its payload.
+// PayloadLengthInfo follows useSameStreamMux, plus the StreamMuxConfig when
+// that bit is 0; the restricted config ADTSConverter accepts is 52 bits.
 std::optional<int> AACUtils::getFrameSize(const uint8_t* input, size_t size) {
-    if (size < 8) {
+    if (size == 0) {
         return std::nullopt;
     }
 
+    size_t bit = (input[0] & 0b10000000) ? 1 : 53;
     int slotLength = 0;
-    size_t i = 6;
 
     while (true) {
-        if (i + 1 >= size) {
+        if (bit + 8 > size * 8) {
             return std::nullopt;
         }
 
-        int tmp = ((input[i] & 0b00000111) << 5) |
-            ((input[i + 1] & 0b11111000) >> 3);
+        const size_t byte = bit / 8;
+        const size_t shift = bit % 8;
+        uint16_t word = static_cast<uint16_t>(input[byte] << 8);
+        if (shift) {
+            word |= input[byte + 1];
+        }
+        const int tmp = (word >> (8 - shift)) & 0xFF;
 
         slotLength += tmp;
-        i++;
+        bit += 8;
 
         if (tmp != 255) {
             break;
         }
-
-        if (i >= size) {
-            return std::nullopt;
-        }
     }
 
-    return static_cast<int>(slotLength + i + 1);
+    return static_cast<int>((bit + static_cast<size_t>(slotLength) * 8 + 7) / 8);
 }

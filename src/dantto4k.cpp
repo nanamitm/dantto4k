@@ -976,6 +976,7 @@ int main(int argc, char* argv[]) {
     VideoTimestampProbeHandler probeHandler(demuxer, args.probeSampleLimit);
     BitrateProbeHandler bitrateProbeHandler(demuxer);
     MmtTlv::MmtsMapWriter mapWriter;
+    mapWriter.setDemuxer(demuxer);
     MmtTlv::AppDataDumper appDataDumper(std::filesystem::path(args.dumpAppDataDirectory));
     std::unique_ptr<BufferedOutput> bufferedOutput;
     uint64_t decodeFailedPacketCount = 0;

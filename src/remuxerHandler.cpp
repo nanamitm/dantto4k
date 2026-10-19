@@ -95,8 +95,8 @@ int convertRunningStatus(int runningStatus) {
 }
 
 // Asset types that MmtTlvDemuxer::processMmtPackageTable() assigns a stream
-// index to. Keep in sync with it: the PMT builder walks the MPT assets in the
-// same order and must consume indices identically.
+// index to. The PMT builder resolves each asset by packet_id, since stream
+// indices are global across packages and remain stable across MPT updates.
 bool isIndexedAssetType(uint32_t assetType) {
     switch (assetType) {
     case MmtTlv::AssetType::hev1:
@@ -1236,22 +1236,13 @@ void RemuxerHandler::onMpt(const MmtTlv::Mpt& mpt) {
     ts::CADescriptor caDescriptor(5, 0x0901);
     tsPmt.descs.add(duck, caDescriptor);
 
-    int streamIndex = 0;
     for (auto& asset : mpt.assets) {
         for (const auto& locationInfo : asset.locationInfos) {
             if (locationInfo.locationType == 0) {
-                // Stream indices must be consumed exactly like
-                // MmtTlvDemuxer::processMmtPackageTable() hands them out, or every
-                // asset after the first mismatch is looked up as the wrong stream
-                // and lands in the PMT with someone else's PID and component tag.
-                // The demuxer indexes these four asset types and nothing else, so
-                // take the index up front and let the checks below bail out freely.
                 if (!isIndexedAssetType(asset.assetType)) {
                     continue;
                 }
-
-                const int assetStreamIndex = streamIndex++;
-                const MmtTlv::MmtStream* mmtStream = demuxer.getStreamByIdx(static_cast<uint16_t>(assetStreamIndex));
+                const MmtTlv::MmtStream* mmtStream = demuxer.getStream(locationInfo.packetId);
                 if (!mmtStream) {
                     continue;
                 }

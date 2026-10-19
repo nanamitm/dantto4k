@@ -34,7 +34,7 @@ public:
 
     void onMpt(const MmtTlv::Mpt& mpt) override
     {
-        MmtsRecorder::OnMpt(mpt);
+        MmtsRecorder::OnMpt(mpt, &g_bonDriverContext.demuxer);
     }
 };
 

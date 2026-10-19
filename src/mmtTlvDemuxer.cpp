@@ -263,11 +263,12 @@ DemuxStatus MmtTlvDemuxer::demux(Common::ReadStream& stream) {
                         const size_t payloadOffset = patched.size() - mmtp.payload.size();
                         std::copy(mmtp.payload.begin(), mmtp.payload.end(), patched.begin() + payloadOffset);
 
-                        if (mmtp.extensionHeaderFlag && mmtp.extensionHeaderLength >= 5 &&
+                        if (mmtp.scramblingFlagsOffset &&
+                            *mmtp.scramblingFlagsOffset < mmtp.extensionHeaderLength &&
                             payloadOffset >= mmtp.extensionHeaderLength) {
-                            // Extension header field layout:
-                            // [2B sub-type][2B reserved][1B flags, encryption flag at bits 4:3]
-                            patched[payloadOffset - mmtp.extensionHeaderLength + 4] &= ~0x18u;
+                            const size_t flags = payloadOffset - mmtp.extensionHeaderLength +
+                                *mmtp.scramblingFlagsOffset;
+                            patched[flags] &= ~0x18u;
                         }
                     }
                     auto packet = serializeTlvPacket(static_cast<uint8_t>(TlvPacketType::HeaderCompressedIpPacket), patched);
@@ -615,30 +616,36 @@ void MmtTlvDemuxer::processMmtPackageTable(const Mpt& mpt) {
         }
     }
 
-    if (mapMpt.size()) {
-        for (auto it = mapStream.begin(); it != mapStream.end(); ) {
-            auto mptIt = mapMpt.find(it->first);
-            if (mptIt != mapMpt.end()) {
-                if (mptIt->second != it->second.assetType) {
-                    mapFragmentValidator.erase(mptIt->first);
-                    mapAssembler.erase(mptIt->first);
-                    it = mapStream.erase(it);
-                }
-                else {
-                    ++it;
-                }
+    auto& previous = packagePacketIds[mpt.mmtPackageIdByte];
+    const auto oldPacketIds = previous;
+    previous.clear();
+    for (const auto& [id, type] : mapMpt) {
+        previous.insert(id);
+    }
+    for (uint16_t id : oldPacketIds) {
+        if (previous.contains(id)) {
+            continue;
+        }
+        const bool shared = std::any_of(packagePacketIds.begin(), packagePacketIds.end(),
+            [id](const auto& package) { return package.second.contains(id); });
+        if (!shared) {
+            if (auto* old = getStream(id)) {
+                mapPacketIdByIdx.erase(static_cast<uint16_t>(old->streamIndex));
             }
-            else {
-                mapFragmentValidator.erase(it->first);
-                mapAssembler.erase(it->first);
-                it = mapStream.erase(it);
-            }
+            mapStream.erase(id);
+            mapFragmentValidator.erase(id);
+            mapAssembler.erase(id);
+        }
+    }
+    for (const auto& [id, type] : mapMpt) {
+        if (auto* old = getStream(id); old && old->assetType != type) {
+            mapPacketIdByIdx.erase(static_cast<uint16_t>(old->streamIndex));
+            mapStream.erase(id);
+            mapFragmentValidator.erase(id);
+            mapAssembler.erase(id);
         }
     }
 
-    mapPacketIdByIdx.clear();
-
-    int streamIndex = 0;
     for (const auto& asset : mpt.assets) {
         MmtStream* mmtStream = nullptr;
 
@@ -654,15 +661,21 @@ void MmtTlvDemuxer::processMmtPackageTable(const Mpt& mpt) {
                     );
                     mmtStream = &it->second;
                     mmtStream->assetType = asset.assetType;
-                    mmtStream->streamIndex = streamIndex;
+                    if (inserted) {
+                        // Allocate globally; MPT-local indices alias other services.
+                        uint16_t index = 0;
+                        while (mapPacketIdByIdx.contains(index) && index != 0xFFFF) {
+                            ++index;
+                        }
+                        mmtStream->streamIndex = index;
+                        mapPacketIdByIdx[index] = locationInfo.packetId;
+                    }
 
                     if (!mmtStream->mpuProcessor) {
                         mmtStream->mpuProcessor = MpuProcessorFactory::create(mmtStream->assetType);
                     }
 
-                    mapPacketIdByIdx[streamIndex] = locationInfo.packetId;
                     statistics.getMmtStat(locationInfo.packetId)->assetType = asset.assetType;
-                    ++streamIndex;
                 }
             }
         }
@@ -729,6 +742,29 @@ void MmtTlvDemuxer::processMmtPackageTable(const Mpt& mpt) {
                 break;
             }
             }
+        }
+        for (const auto& locationInfo : asset.locationInfos) {
+            auto* target = locationInfo.locationType == 0 ? getStream(locationInfo.packetId) : nullptr;
+            if (!target) {
+                continue;
+            }
+            auto used = [&](uint16_t pid) {
+                return std::any_of(mapStream.begin(), mapStream.end(), [&](const auto& entry) {
+                    return &entry.second != target && entry.second.outputPacketId == pid;
+                });
+            };
+            if (target->outputPacketId) {
+                continue; // Keep PMT/PES PIDs stable across periodic MPTs.
+            }
+            uint16_t pid = target->getMpeg2PacketId();
+            // 0x1FF is PCR; 0xF00+ is reserved for app-data and PMTs.
+            if (pid < 0x100 || pid >= 0xF00 || pid == 0x1FF || used(pid)) {
+                pid = 0x200;
+                while (pid < 0xF00 && used(pid)) {
+                    ++pid;
+                }
+            }
+            target->outputPacketId = pid < 0xF00 ? pid : 0x1FFF;
         }
     }
 }
@@ -847,6 +883,7 @@ void MmtTlvDemuxer::clear() {
     mapFragmentValidator.clear();
     mfuData.clear();
     mapStream.clear();
+    packagePacketIds.clear();
     mapPacketIdByIdx.clear();
     statistics.clear();
 

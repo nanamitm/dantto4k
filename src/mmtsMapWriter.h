@@ -11,6 +11,7 @@
 namespace MmtTlv {
 
 class MmtStream;
+class MmtTlvDemuxer;
 class Mpt;
 
 class MmtsMapWriter : public DemuxerHandler {
@@ -24,6 +25,7 @@ public:
     void close();
     bool isOpen() const { return !path.empty(); }
 
+    void setDemuxer(MmtTlvDemuxer& value) { demuxer = &value; }
     void setSourceSize(uint64_t size) { sourceSize = size; }
     void noteOutputPacket(size_t size);
 
@@ -67,6 +69,7 @@ private:
     void writeText(std::ofstream& ofs) const;
     void writeBinary(std::ofstream& ofs) const;
 
+    MmtTlvDemuxer* demuxer{nullptr};
     std::filesystem::path path;
     Format format{Format::Binary};
     uint64_t sourceSize{0};
