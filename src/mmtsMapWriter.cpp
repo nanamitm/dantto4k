@@ -4,6 +4,7 @@
 #include "mhStreamIdentificationDescriptor.h"
 #include "mmtGeneralLocationInfo.h"
 #include "mmtStream.h"
+#include "mmtTlvDemuxer.h"
 #include "mpt.h"
 #include "mpuProcessorBase.h"
 #include <algorithm>
@@ -402,7 +403,8 @@ void MmtsMapWriter::onMpt(const Mpt& mpt)
             TrackInfo track;
             track.type = asset.assetType == AssetType::hev1 ? "video" :
                          asset.assetType == AssetType::mp4a ? "audio" : "subtitle";
-            track.streamIndex = streamIndex;
+            const auto* registered = demuxer ? demuxer->getStream(packetId) : nullptr;
+            track.streamIndex = registered ? registered->getStreamIndex() : streamIndex;
             track.packetId = packetId;
 
             for (const auto& descriptor : asset.descriptors.list) {

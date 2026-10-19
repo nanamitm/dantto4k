@@ -32,7 +32,7 @@ public:
 
 	std::pair<int64_t, int64_t> getNextPtsDts();
 	uint32_t getAuIndex() const { return auIndex; }
-	uint16_t getMpeg2PacketId() const { return componentTag == -1 ? 0x200 + streamIndex : 0x100 + componentTag; }
+	uint16_t getMpeg2PacketId() const { return outputPacketId ? *outputPacketId : (componentTag == -1 ? 0x200 + streamIndex : 0x100 + componentTag); }
 	uint16_t getPacketId() const { return packetId; }
 	uint32_t getAssetType() const { return assetType; }
 	uint32_t getStreamIndex() const { return streamIndex; }
@@ -65,6 +65,7 @@ private:
 	std::pair<const MpuTimestampDescriptor::Entry, const MpuExtendedTimestampDescriptor::Entry> getCurrentTimestamp() const;
 
 	uint16_t packetId;
+	std::optional<uint16_t> outputPacketId;
 	uint32_t assetType{0};
 	uint32_t auIndex{0};
 	uint32_t streamIndex{0};

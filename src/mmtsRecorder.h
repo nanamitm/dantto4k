@@ -6,6 +6,7 @@
 
 namespace MmtTlv {
 class MmtStream;
+class MmtTlvDemuxer;
 class Mpt;
 struct MfuData;
 }
@@ -26,6 +27,6 @@ void MarkDecodeFailure();
 void OnVideoData(const MmtTlv::MmtStream& stream, const MmtTlv::MfuData& mfu);
 void OnAudioData(const MmtTlv::MmtStream& stream, const MmtTlv::MfuData& mfu);
 void OnSubtitleData(const MmtTlv::MmtStream& stream, const MmtTlv::MfuData& mfu);
-void OnMpt(const MmtTlv::Mpt& mpt);
+void OnMpt(const MmtTlv::Mpt& mpt, MmtTlv::MmtTlvDemuxer* demuxer = nullptr);
 
 } // namespace MmtsRecorder

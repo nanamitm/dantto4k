@@ -267,10 +267,13 @@ void OnSubtitleData(const MmtTlv::MmtStream& stream, const MmtTlv::MfuData& mfu)
     }
 }
 
-void OnMpt(const MmtTlv::Mpt& mpt)
+void OnMpt(const MmtTlv::Mpt& mpt, MmtTlv::MmtTlvDemuxer* demuxer)
 {
     std::lock_guard<std::mutex> lock(g_mutex);
     for (auto& item : g_sessions) {
+        if (demuxer) {
+            item.second->mapWriter.setDemuxer(*demuxer);
+        }
         item.second->mapWriter.onMpt(mpt);
     }
 }
