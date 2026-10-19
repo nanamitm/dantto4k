@@ -33,6 +33,7 @@ bool Mmtp::unpack(Common::ReadStream& stream) {
 		// scrambling sub-type below fills this in; every other extension header
 		// must leave it empty.
 		extensionHeaderScrambling = std::nullopt;
+		scramblingFlagsOffset.reset();
 
 		if (extensionHeaderFlag) {
 			if (stream.leftBytes() < 4) {
@@ -47,18 +48,33 @@ bool Mmtp::unpack(Common::ReadStream& stream) {
 			extensionHeaderField.resize(extensionHeaderLength);
 			stream.read(extensionHeaderField.data(), extensionHeaderLength);
 
-			if (extensionHeaderField.size() >= 5) {
-				uint16_t e = Common::swapEndian16(*(uint16_t*)extensionHeaderField.data());
-				if ((e & 0x7FFF) == 0x0001) {
-					Common::ReadStream nstream(extensionHeaderField);
-					nstream.skip(4);
-
-					ExtensionHeaderScrambling s;
-					if (s.unpack(nstream, extensionHeaderType, extensionHeaderLength)) {
-						extensionHeaderScrambling = s;
-					}
-				}
-			}
+            // STD-B60 Table 6-8: extension_type=0 contains a sequence of
+            // independently typed/length-delimited elements, in any order.
+            if (extensionHeaderType == 0) {
+                Common::ReadStream extensions(extensionHeaderField);
+                while (!extensions.isEof()) {
+                    const auto type = extensions.getBe16U();
+                    const auto length = extensions.getBe16U();
+                    Common::ReadStream element(extensions, length);
+                    if ((type & 0x7FFF) == 1) {
+                        // Multiple scrambling elements would make the flags
+                        // to decrypt/patch ambiguous. Do not guess.
+                        if (extensionHeaderScrambling) {
+                            return false;
+                        }
+                        ExtensionHeaderScrambling scrambling;
+                        if (!scrambling.unpack(element, extensionHeaderType, length)) {
+                            return false;
+                        }
+                        scramblingFlagsOffset = extensions.getPos();
+                        extensionHeaderScrambling = scrambling;
+                    }
+                    extensions.skip(length);
+                    if (type & 0x8000) {
+                        break;
+                    }
+                }
+            }
 		}
 
 		payload.resize(stream.leftBytes());

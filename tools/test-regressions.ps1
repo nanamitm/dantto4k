@@ -1,6 +1,6 @@
 param(
-    [ValidateSet('paths', 'acas', 'casproxy', 'demux', 'bontuner', 'ttml', 'appdata', 'recorder', 'output')]
-    [string[]]$Tests = @('paths', 'acas', 'casproxy', 'demux', 'bontuner', 'ttml', 'appdata', 'recorder', 'output'),
+    [ValidateSet('paths', 'acas', 'casproxy', 'demux', 'mmtp', 'bontuner', 'ttml', 'appdata', 'recorder', 'output')]
+    [string[]]$Tests = @('paths', 'acas', 'casproxy', 'demux', 'mmtp', 'bontuner', 'ttml', 'appdata', 'recorder', 'output'),
     [switch]$SkipBuild
 )
 $ErrorActionPreference = 'Stop'
@@ -39,6 +39,7 @@ try {
             acas { 'acas_safety_test' }
             casproxy { 'cas_proxy_safety_test' }
             demux { 'demux_safety_test' }
+            mmtp { 'mmtp_extension_test' }
             bontuner { 'bontuner_safety_test' }
             ttml { 'ttml_test' }
             appdata { 'app_data_transport_test' }

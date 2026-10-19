@@ -263,11 +263,12 @@ DemuxStatus MmtTlvDemuxer::demux(Common::ReadStream& stream) {
                         const size_t payloadOffset = patched.size() - mmtp.payload.size();
                         std::copy(mmtp.payload.begin(), mmtp.payload.end(), patched.begin() + payloadOffset);
 
-                        if (mmtp.extensionHeaderFlag && mmtp.extensionHeaderLength >= 5 &&
+                        if (mmtp.scramblingFlagsOffset &&
+                            *mmtp.scramblingFlagsOffset < mmtp.extensionHeaderLength &&
                             payloadOffset >= mmtp.extensionHeaderLength) {
-                            // Extension header field layout:
-                            // [2B sub-type][2B reserved][1B flags, encryption flag at bits 4:3]
-                            patched[payloadOffset - mmtp.extensionHeaderLength + 4] &= ~0x18u;
+                            const size_t flags = payloadOffset - mmtp.extensionHeaderLength +
+                                *mmtp.scramblingFlagsOffset;
+                            patched[flags] &= ~0x18u;
                         }
                     }
                     auto packet = serializeTlvPacket(static_cast<uint8_t>(TlvPacketType::HeaderCompressedIpPacket), patched);
