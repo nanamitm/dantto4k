@@ -23,6 +23,7 @@ MfuProcessResult MpuAudioProcessor::process(MmtStream& mmtStream, const std::vec
     }
     if (!frameTimestamps || data.size() > MAX_AAC_FRAME_SIZE - aacFragment.size()) {
         clear();
+        ++mmtStream.droppedBadFrame;
         return MfuProcessResult::dropped();
     }
     aacFragment.insert(aacFragment.end(), data.begin(), data.end());
@@ -37,6 +38,7 @@ MfuProcessResult MpuAudioProcessor::process(MmtStream& mmtStream, const std::vec
     const auto size = AACUtils::getFrameSize(aacFragment.data(), aacFragment.size());
     if (!size || static_cast<size_t>(*size) > aacFragment.size()) {
         clear();
+        ++mmtStream.droppedBadFrame;
         return MfuProcessResult::dropped();
     }
     MfuData result;

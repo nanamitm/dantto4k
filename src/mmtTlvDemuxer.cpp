@@ -967,6 +967,7 @@ void MmtTlvDemuxer::processMpu(Common::ReadStream& stream) {
     }
 
     if (mpu.aggregateFlag && mpu.fragmentationIndicator != FragmentationIndicator::NotFragmented) {
+        ++mmtStream->droppedMalformed;
         return;
     }
 
@@ -1021,6 +1022,7 @@ void MmtTlvDemuxer::processMpu(Common::ReadStream& stream) {
     Common::ReadStream nstream(mpu.payload);
     if (mpu.aggregateFlag == 0) {
         if (!dataUnit.unpack(nstream, mpu.timedFlag, mpu.aggregateFlag)) {
+            ++mmtStream->droppedMalformed;
             return;
         }
 
@@ -1030,6 +1032,9 @@ void MmtTlvDemuxer::processMpu(Common::ReadStream& stream) {
             if (validator->validate(mpu.fragmentationIndicator, mmtp.packetSequenceNumber)) {
                 Common::ReadStream dataStream(dataUnit.data);
                 processMfuData(dataStream);
+            }
+            else {
+                ++mmtStream->droppedFragment;
             }
         }
         else {
@@ -1043,6 +1048,7 @@ void MmtTlvDemuxer::processMpu(Common::ReadStream& stream) {
     else {
         while (!nstream.isEof()) {
             if (!dataUnit.unpack(nstream, mpu.timedFlag, mpu.aggregateFlag)) {
+                ++mmtStream->droppedMalformed;
                 return;
             }
 
@@ -1051,6 +1057,9 @@ void MmtTlvDemuxer::processMpu(Common::ReadStream& stream) {
                 if (validator->validate(mpu.fragmentationIndicator, mmtp.packetSequenceNumber)) {
                     Common::ReadStream dataStream(dataUnit.data);
                     processMfuData(dataStream);
+                }
+                else {
+                    ++mmtStream->droppedFragment;
                 }
             }
             else {
