@@ -1,5 +1,6 @@
 #include "mmtTableFactory.h"
 #include "ecm.h"
+#include "emm.h"
 #include "mhCdt.h"
 #include "mhEit.h"
 #include "mhSdt.h"
@@ -19,6 +20,7 @@ namespace MmtTlv {
 
 static const std::unordered_map<uint8_t, std::function<std::unique_ptr<MmtTableBase>()>> mapMmtTableFactory = {
 	{ MmtTableId::Ecm_0,		[] { return std::make_unique<Ecm>(); } },
+	{ MmtTableId::Emm_0,		[] { return std::make_unique<Emm>(); } },
 	{ MmtTableId::MhCdt,		[] { return std::make_unique<MhCdt>(); } },
 	{ MmtTableId::MhEitPf,		[] { return std::make_unique<MhEit>(); } },
 	{ MmtTableId::MhEitS_0,		[] { return std::make_unique<MhEit>(); } },

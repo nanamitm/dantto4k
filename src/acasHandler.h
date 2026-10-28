@@ -3,6 +3,7 @@
 #include <future>
 #include <queue>
 #include <chrono>
+#include <deque>
 #include "extensionHeaderScrambling.h"
 #include "acasCard.h"
 #include "smartCard.h"
@@ -11,9 +12,10 @@
 
 class AcasHandler : public MmtTlv::CasHandler {
 public:
-    AcasHandler();
+    explicit AcasHandler(bool enableEmm = false);
     ~AcasHandler();
     bool onEcm(const std::vector<uint8_t>& ecm) override;
+    bool onEmm(const std::vector<uint8_t>& emm) override;
     bool decrypt(MmtTlv::Mmtp& mmtp) override;
     void clear() override;
     void setSmartCard(std::unique_ptr<ISmartCard> sc);
@@ -27,6 +29,13 @@ private:
     // uncontracted service) must not be asked again for every repetition.
     static constexpr std::chrono::milliseconds kEcmRetryInterval{ 1000 };
     std::queue<Task> queue;
+    const bool enableEmm;
+    static constexpr size_t maxPendingEmms = 64;
+    std::deque<Task> emmQueue;
+    std::optional<Task> activeEmm;
+    std::optional<std::array<uint8_t, 6>> emmTarget;
+    std::deque<std::pair<std::vector<uint8_t>, std::chrono::steady_clock::time_point>> recentEmms;
+    bool emmQueueFull = false;
     std::condition_variable queueCv;
     std::vector<uint8_t> lastEcm;
     std::vector<uint8_t> failedEcm;

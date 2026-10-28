@@ -55,6 +55,9 @@
     <ClCompile Include="../src/ecm.cpp">
       <Filter>mmttlv\mmt\tables</Filter>
     </ClCompile>
+    <ClCompile Include="../src/emm.cpp">
+      <Filter>mmttlv\mmt\tables</Filter>
+    </ClCompile>
     <ClCompile Include="../src/stream.cpp">
       <Filter>mmttlv\common</Filter>
     </ClCompile>
@@ -387,6 +390,9 @@
       <Filter>dantto4k\bondriver</Filter>
     </ClInclude>
     <ClInclude Include="../src/ecm.h">
+      <Filter>mmttlv\mmt\tables</Filter>
+    </ClInclude>
+    <ClInclude Include="../src/emm.h">
       <Filter>mmttlv\mmt\tables</Filter>
     </ClInclude>
     <ClInclude Include="../src/stream.h">

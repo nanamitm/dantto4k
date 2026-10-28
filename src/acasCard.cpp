@@ -1,6 +1,7 @@
 #include "acasCard.h"
 #include <random>
 #include <algorithm>
+#include <sstream>
 #include "config.h"
 
 uint32_t AcasCard::getA0AuthKcl(sha256_t& output) {
@@ -73,6 +74,7 @@ bool AcasCard::ecm(const std::vector<uint8_t>& ecm, DecryptionKey& output) {
     try {
     retry:
         if (cardReset) {
+            casModuleId.reset();
         retryReconnect:
             if (retryReconnectCount > 4) {
                 return false;
@@ -154,6 +156,7 @@ bool AcasCard::ecm(const std::vector<uint8_t>& ecm, DecryptionKey& output) {
     catch (const std::runtime_error& e) {
         std::cerr << e.what() << std::endl;
         cardReset = true;
+        casModuleId.reset();
     }
 
     return false;
@@ -161,4 +164,102 @@ bool AcasCard::ecm(const std::vector<uint8_t>& ecm, DecryptionKey& output) {
 
 void AcasCard::setSmartCard(std::unique_ptr<ISmartCard> sc) {
     smartCard = std::move(sc);
+    casModuleId.reset();
+    cardReset = false;
+}
+
+AcasCard::EmmResult AcasCard::emm(const std::vector<uint8_t>& message) {
+    const auto fail = [](const std::string& reason) {
+        std::cerr << "ACAS EMM update failed: " << reason << std::endl;
+        return EmmResult::Failed;
+    };
+    if (message.size() < 9 || message.size() > 255 ||
+        message[6] < 2 || message.size() != 7u + message[6]) {
+        return fail("invalid addressed message length");
+    }
+    if (!smartCard) return fail("no smart card configured");
+    if (!cardReset && casModuleId && smartCard->isInited() && smartCard->isConnected() &&
+        !std::equal(casModuleId->begin(), casModuleId->end(), message.begin())) {
+        return EmmResult::NotAddressed;
+    }
+    try {
+        // A reset invalidates the cached destination ID. Never send an EMM
+        // until the ID has been read again from the currently connected card.
+        for (int attempt = 0; attempt < 3; ++attempt) {
+            if (cardReset) {
+                casModuleId.reset();
+                const auto result = smartCard->reconnect();
+                if (result != SCARD_S_SUCCESS) {
+                    std::ostringstream reason;
+                    reason << "reconnect returned PC/SC 0x" << std::hex << result;
+                    return fail(reason.str());
+                }
+                cardReset = false;
+            }
+            if (!smartCard->isInited() && !smartCard->init()) return fail("reader initialization failed");
+            if (!smartCard->isConnected()) {
+                casModuleId.reset();
+                smartCard->connect();
+            }
+            auto transaction = smartCard->scopedTransaction();
+            const auto checkTransport = [&](uint32_t result, const char* command) {
+                if (result == SCARD_S_SUCCESS) return true;
+                cardReset = true;
+                casModuleId.reset();
+                if (result != SCARD_W_RESET_CARD) {
+                    std::ostringstream reason;
+                    reason << command << " returned PC/SC 0x" << std::hex << result;
+                    fail(reason.str());
+                }
+                return false;
+            };
+            const auto checkResponse = [&](const ApduResponse& response, const char* command) {
+                const auto& data = response.getData();
+                if (!response.isSuccess() || data.size() < 6 || data[4] != 0x21 || data[5] != 0x00) {
+                    std::ostringstream reason;
+                    reason << command << " response SW=0x" << std::hex
+                           << ((response.getSw1() << 8) | response.getSw2());
+                    if (data.size() >= 6) reason << ", return=0x" << ((data[4] << 8) | data[5]);
+                    else reason << ", truncated body (" << std::dec << data.size() << " bytes)";
+                    fail(reason.str());
+                    return false;
+                }
+                return true;
+            };
+            if (!casModuleId) {
+                ApduResponse response;
+                const auto result = smartCard->transmit(ApduCommand(0x90, 0x30, 0, 1).case2short(0), response);
+                if (!checkTransport(result, "initial settings")) {
+                    if (result == SCARD_W_RESET_CARD) continue;
+                    return EmmResult::Failed;
+                }
+                if (!checkResponse(response, "initial settings")) return EmmResult::Failed;
+                const auto& data = response.getData();
+                if (data.size() < 17) return fail("initial settings body is truncated (" + std::to_string(data.size()) + " bytes, need 17)");
+                if (data[6] != 0 || data[7] != 5) {
+                    std::ostringstream reason;
+                    reason << "unsupported CA system ID 0x" << std::hex << ((data[6] << 8) | data[7]);
+                    return fail(reason.str());
+                }
+                std::array<uint8_t, 6> id;
+                std::copy_n(data.begin() + 8, id.size(), id.begin());
+                casModuleId = id;
+            }
+            if (!std::equal(casModuleId->begin(), casModuleId->end(), message.begin())) {
+                return EmmResult::NotAddressed;
+            }
+            ApduResponse response;
+            const auto result = smartCard->transmit(ApduCommand(0x90, 0x36, 0, 1).case4short(message, 0), response);
+            if (!checkTransport(result, "EMM receive")) {
+                if (result == SCARD_W_RESET_CARD) continue;
+                return EmmResult::Failed;
+            }
+            return checkResponse(response, "EMM receive") ? EmmResult::Applied : EmmResult::Failed;
+        }
+        return fail("card reset retry limit exceeded");
+    } catch (const std::runtime_error& error) {
+        cardReset = true;
+        casModuleId.reset();
+        return fail(error.what());
+    }
 }
