@@ -1038,10 +1038,10 @@ int main(int argc, char* argv[]) {
     }
 
     demuxer.setAssumeDescrambled(args.frontendDescrambled);
-    if (!args.frontendDescrambled) {
+    if (!args.frontendDescrambled || config.enableEmm) {
         try {
             // Create ACAS handler and initialize the smart card
-            std::unique_ptr<AcasHandler> acasHandler = std::make_unique<AcasHandler>();
+            std::unique_ptr<AcasHandler> acasHandler = std::make_unique<AcasHandler>(config.enableEmm);
             std::unique_ptr<ISmartCard> smartCard;
             if (args.casProxyHost.empty()) {
                 smartCard = std::make_unique<LocalSmartCard>();

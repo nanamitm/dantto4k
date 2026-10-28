@@ -70,6 +70,9 @@ Config loadConfig(const std::string& filename) {
                  if (key == "customWinscardDLL") {
                      config.customWinscardDLL = value;
                  }
+                 if (key == "enableEmm") {
+                     config.enableEmm = (value == "true");
+                 }
              }
          }
          if (currentSection == "audio") {

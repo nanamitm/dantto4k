@@ -12,6 +12,12 @@ production objects, and fails on the first unsuccessful build or test. Compiler
 response files and executables use `work/regression-tests`.
 No tuner, smart card, CasProxy service, or broadcast recording is required.
 
+The `acas` suite also checks the EMM INI opt-in, addressed-card filtering,
+short APDU and response validation, reset recovery, duplicate suppression,
+ECM priority and bounded EMM cancellation using a fake card. The `demux`
+suite covers EMM CRC/length checks and rejects future or message-only tables
+before any update can reach the card.
+
 After an existing Release build, individual suites can be selected:
 
 ```powershell

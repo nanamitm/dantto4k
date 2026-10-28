@@ -200,6 +200,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$(ProjectDir)..\tools\gener
     <ClCompile Include="../src/demuxerTeeHandler.cpp" />
     <ClCompile Include="../src/dllmain.cpp" />
     <ClCompile Include="../src/ecm.cpp" />
+    <ClCompile Include="../src/emm.cpp" />
     <ClCompile Include="../src/acasHandler.cpp" />
     <ClCompile Include="../src/eventPackageDescriptor.cpp" />
     <ClCompile Include="../src/extensionHeaderScrambling.cpp" />
@@ -325,6 +326,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$(ProjectDir)..\tools\gener
     <ClInclude Include="../src/demuxerTeeHandler.h" />
     <ClInclude Include="../src/descriptorConverter.h" />
     <ClInclude Include="../src/ecm.h" />
+    <ClInclude Include="../src/emm.h" />
     <ClInclude Include="../src/acasHandler.h" />
     <ClInclude Include="../src/eventPackageDescriptor.h" />
     <ClInclude Include="../src/extensionHeaderScrambling.h" />

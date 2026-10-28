@@ -1,5 +1,6 @@
 #include "dataUnit.h"
 #include "ecm.h"
+#include "emm.h"
 #include "m2SectionMessage.h"
 #include "m2ShortSectionMessage.h"
 #include "mhCdt.h"
@@ -449,6 +450,14 @@ void MmtTlvDemuxer::processMmtTable(Common::ReadStream& stream) {
     case MmtTableId::Ecm_0:
         processEcm(*static_cast<Ecm*>(table.get()));
         break;
+    case MmtTableId::Emm_0:
+        if (casHandler) {
+            const auto& emm = *static_cast<Emm*>(table.get());
+            if (emm.currentNextIndicator) {
+                for (const auto& message : emm.messages) casHandler->onEmm(message);
+            }
+        }
+        break;
     }
     
     if (demuxerHandler) {
@@ -871,7 +880,7 @@ void MmtTlvDemuxer::processMpuExtendedTimestampDescriptor(const MpuExtendedTimes
 }
 
 void MmtTlvDemuxer::processEcm(const Ecm& ecm) {
-    if (!casHandler) {
+    if (!casHandler || assumeDescrambled) {
         return;
     }
 

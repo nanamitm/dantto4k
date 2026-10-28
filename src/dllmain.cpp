@@ -83,7 +83,7 @@ extern "C" __declspec(dllexport) IBonDriver* CreateBonDriver() {
     }
 
     try {
-        std::unique_ptr<AcasHandler> acasHandler = std::make_unique<AcasHandler>();
+        std::unique_ptr<AcasHandler> acasHandler = std::make_unique<AcasHandler>(config.enableEmm);
         std::unique_ptr<ISmartCard> smartCard;
         if (config.casProxyServer.empty()) {
             smartCard = std::make_unique<LocalSmartCard>();

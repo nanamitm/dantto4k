@@ -22,6 +22,10 @@ public:
     };
 
     bool ecm(const std::vector<uint8_t>& ecm, DecryptionKey& output);
+    enum class EmmResult { Applied, NotAddressed, Failed };
+    EmmResult emm(const std::vector<uint8_t>& message);
+    // Only read by the same worker that performs card I/O.
+    std::optional<std::array<uint8_t, 6>> getEmmCardId() const { return casModuleId; }
     void setSmartCard(std::unique_ptr<ISmartCard> sc);
 
 private:
@@ -29,5 +33,6 @@ private:
 
     std::unique_ptr<ISmartCard> smartCard;
     bool cardReset{false};
+    std::optional<std::array<uint8_t, 6>> casModuleId;
 
 };
