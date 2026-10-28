@@ -51,9 +51,11 @@ private:
     AcasCard::DecryptionKey key{};
     bool running{true};
     std::thread workerThread;
+#if DANTTO4K_HAS_AESNI_INTRINSICS
     AESCtrCipher aes;
     std::optional<std::array<uint8_t, 16>> lastKey;
     bool hasAESNI = false;
+#endif
     uint64_t generation = 0;
 
 
