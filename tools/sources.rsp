@@ -95,6 +95,7 @@
 ..\src\stream.cpp
 ..\src\systemManagementDescriptor.cpp
 ..\src\timeUtil.cpp
+..\src\tsVerifier.cpp
 ..\src\timebase.cpp
 ..\src\tlv.cpp
 ..\src\tlvDescriptorFactory.cpp

@@ -8,6 +8,8 @@
 #include <optional>
 #include <unordered_map>
 #include <functional>
+#include <map>
+#include <ostream>
 #include <string>
 
 namespace StreamType {
@@ -88,6 +90,8 @@ public:
 	uint64_t getEitSectionDropCount() const { return eitSectionDropCount; }
 	// Subtitle documents dropped because no timeline could be anchored.
 	uint64_t getSubtitleTimelineDropCount() const { return subtitleTimelineDropCount; }
+	// What the conversion left out, for --report.
+	void printConversionReport(std::ostream& out) const;
 
 private:
 	enum class PesState {
@@ -108,9 +112,14 @@ private:
 	uint64_t appDataClock90k() const { return lastPcr / 300; }
 	void convertAndWriteSubtitle(const MmtTlv::MmtStream& mmtStream, const std::string& ttml);
 	std::optional<uint64_t> subtitleBasePts(const MmtTlv::AdditionalAribSubtitleInfo& subtitleInfo) const;
+	void noteUnconvertedDescriptor(const char* table, uint16_t descriptorTag) { ++unconvertedDescriptors[{ table, descriptorTag }]; }
+	void noteAssetLeftOut(uint16_t serviceId, uint16_t packetId, uint32_t assetType, const char* reason);
+	uint16_t pmtPidForService(uint16_t serviceId);
 	MmtTlv::MmtTlvDemuxer& demuxer;
 	OutputCallback outputCallback;
 	std::unordered_map<uint16_t, uint16_t> mapService2Pid;
+	// Services keep their PMT PID when a PLT lists them in another order or drops them.
+	std::unordered_map<uint16_t, uint16_t> assignedPmtPids;
 	std::unordered_map<uint16_t, uint8_t> mapCC;
 	std::unordered_map<uint16_t, std::vector<uint8_t>> mapPesPendingData;
 	std::unordered_map<uint16_t, uint32_t> mapPesPacketIndex;
@@ -120,6 +129,18 @@ private:
 	uint64_t adtsDropCount{0};
 	uint64_t eitSectionDropCount{0};
 	uint64_t subtitleTimelineDropCount{0};
+	uint64_t subtitleDocumentCount{0};
+	uint64_t subtitlePesCount{0};
+	uint64_t subtitleOtherFormatDropCount{0};
+	uint64_t subtitlePendingDropCount{0};
+	uint64_t eitEventDropCount{0};
+	uint64_t siParameterEntryDropCount{0};
+	std::map<std::pair<std::string, uint16_t>, uint64_t> unconvertedDescriptors;
+	struct LeftOutAsset {
+		uint32_t assetType{0};
+		std::string reason;
+	};
+	std::map<std::pair<uint16_t, uint16_t>, LeftOutAsset> leftOutAssets;
 	int tsid{-1};
 	uint64_t lastPcr{};
 	uint64_t lastWrittenPcr{};

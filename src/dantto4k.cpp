@@ -14,6 +14,7 @@
 #include "progressReporter.h"
 #include "tsduckNames.h"
 #include "filePathSafety.h"
+#include "tsVerifier.h"
 #include <array>
 #include <fstream>
 #include <iomanip>
@@ -53,6 +54,8 @@ struct Args {
     bool listSmartCardReader{false};
     bool noProgress{false};
     bool noStats{false};
+    bool report{false};
+    bool verify{false};
     bool writeMmtsMap{false};
     bool writeMmtsMapText{false};
     bool writeMmtsMapOnly{false};
@@ -563,6 +566,8 @@ Args parseArguments(int argc, char* argv[]) {
             ("probe-bitrate-sample-mb", "With --probe-bitrate, stop after reading this many MB instead of scanning the whole file (0 = no limit, scan to EOF)", cxxopts::value<uint64_t>()->default_value("256"))
             ("dump-app-data", "Experimental: write data broadcasting application files (aapp assets) into the given directory", cxxopts::value<std::string>())
             ("probe-sample-limit", "Number of initial MFU samples to print per video stream", cxxopts::value<size_t>()->default_value("128"))
+            ("report", "Print what the conversion produced and left out to stderr, and verify the TS as it is written", cxxopts::value<bool>()->default_value("false"))
+            ("verify", "Check an MPEG-2 TS file; exits with 1 when it finds problems", cxxopts::value<bool>()->default_value("false"))
             ("no-progress", "Disable progress display", cxxopts::value<bool>()->default_value("false"))
             ("no-stats", "Disable packet statistics", cxxopts::value<bool>()->default_value("false"))
             ("version", "Show the version")
@@ -588,7 +593,8 @@ Args parseArguments(int argc, char* argv[]) {
         const bool probeTsClocks = result["probe-ts-clocks"].as<bool>();
         const bool probeBitrate = result["probe-bitrate"].as<bool>();
         const bool dumpAppData = result["dump-app-data"].count() > 0;
-        const bool probeOnly = probeVideoTimestamps || probeTsVideoPts || probeTsClocks || probeBitrate || dumpAppData;
+        const bool verify = result["verify"].as<bool>();
+        const bool probeOnly = probeVideoTimestamps || probeTsVideoPts || probeTsClocks || probeBitrate || dumpAppData || verify;
         if (!result.count("listSmartCardReader") &&
             (!result.count("input") || (!writeMmtsMapOnly && !probeOnly && !result.count("output")))) {
             std::cout << options.help() << std::endl;
@@ -602,6 +608,7 @@ Args parseArguments(int argc, char* argv[]) {
         args.probeTsVideoPts = probeTsVideoPts;
         args.probeTsClocks = probeTsClocks;
         args.probeBitrate = probeBitrate;
+        args.verify = verify;
         args.probeSampleLimit = result["probe-sample-limit"].as<size_t>();
         args.probeBitrateSampleBytes = result["probe-bitrate-sample-mb"].as<uint64_t>() * 1024ULL * 1024ULL;
         if (dumpAppData) {
@@ -638,7 +645,7 @@ Args parseArguments(int argc, char* argv[]) {
 #endif
 
         if (!args.listSmartCardReader) {
-            const bool outputRequired = !args.writeMmtsMapOnly && !args.probeVideoTimestamps && !args.probeTsVideoPts && !args.probeTsClocks && !args.probeBitrate && args.dumpAppDataDirectory.empty();
+            const bool outputRequired = !args.verify && !args.writeMmtsMapOnly && !args.probeVideoTimestamps && !args.probeTsVideoPts && !args.probeTsClocks && !args.probeBitrate && args.dumpAppDataDirectory.empty();
             if (!result.count("input") || (outputRequired && !result.count("output"))) {
                 std::cerr << (outputRequired ? "input and output arguments are required" : "input argument is required") << std::endl;
                 std::exit(1);
@@ -678,6 +685,7 @@ Args parseArguments(int argc, char* argv[]) {
         if (result["no-stats"].count()) {
             args.noStats = result["no-stats"].as<bool>();
         }
+        args.report = result["report"].as<bool>();
 
         // Disable progress and stats when using stdin/stdout
         if (args.input == "-" || args.output == "-") {
@@ -724,6 +732,10 @@ Args parseArguments(int argc, char* argv[]) {
             args.writeMmtsMap = false;
             args.writeMmtsMapOnly = false;
             args.output.clear();
+        }
+        if (args.report && (args.decodeMmts || probeOnly)) {
+            std::cerr << "--report requires MPEG-2 TS output" << std::endl;
+            std::exit(1);
         }
         if (args.writeMmtsMap && !args.decodeMmts) {
             std::cerr << "--write-mmtsmap requires --decode-mmts" << std::endl;
@@ -798,6 +810,38 @@ void loadExeConfigIfExists() {
 }
 #endif
 
+int verifyTsFile(const std::string& path) {
+#ifdef WIN32
+    if (path == "-" && _setmode(_fileno(stdin), _O_BINARY) == -1) {
+        std::cerr << "Unable to set stdin to binary mode" << std::endl;
+        return 2;
+    }
+#endif
+    std::ifstream file;
+    if (path != "-") {
+        file.open(path, std::ios::binary);
+        if (!file.is_open()) {
+            std::cerr << "Unable to open input file: " << path << std::endl;
+            return 2;
+        }
+    }
+    std::istream& input = path == "-" ? std::cin : file;
+
+    TsVerifier verifier;
+    std::vector<char> buffer(1024 * 1024);
+    while (input) {
+        input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+        verifier.feed(reinterpret_cast<const uint8_t*>(buffer.data()), static_cast<size_t>(input.gcount()));
+    }
+    if (input.bad()) {
+        std::cerr << "Unable to read input file: " << path << std::endl;
+        return 2;
+    }
+
+    verifier.print(std::cout);
+    return verifier.countProblems() == 0 ? 0 : 1;
+}
+
 void printReaderList(const Args& args) {
     try {
         std::unique_ptr<ISmartCard> smartCard;
@@ -856,6 +900,9 @@ int main(int argc, char* argv[]) {
     constexpr size_t chunkSize = 1024 * 1024 * 5; // 5MB
 
     Args args = parseArguments(argc, argv);
+    if (args.verify) {
+        return verifyTsFile(args.input);
+    }
     if (args.probeTsVideoPts) {
         return ProbeTsVideoPts(args.input, args.probeSampleLimit);
     }
@@ -972,6 +1019,7 @@ int main(int argc, char* argv[]) {
 
     MmtTlv::MmtTlvDemuxer demuxer;
     RemuxerHandler handler(demuxer);
+    TsVerifier outputVerifier;
     NullDemuxerHandler nullHandler;
     VideoTimestampProbeHandler probeHandler(demuxer, args.probeSampleLimit);
     BitrateProbeHandler bitrateProbeHandler(demuxer);
@@ -1025,6 +1073,9 @@ int main(int argc, char* argv[]) {
             handler.setOutputCallback([&](const uint8_t* data, size_t size) {
                 assert(size == 188);
                 outputStream->write(reinterpret_cast<const char*>(data), size);
+                if (args.report) {
+                    outputVerifier.feed(data, size);
+                }
             });
         }
         else {
@@ -1032,6 +1083,9 @@ int main(int argc, char* argv[]) {
             handler.setOutputCallback([&, bo = bufferedOutput.get()](const uint8_t* data, size_t size) {
                 assert(size == 188);
                 bo->write(data, size);
+                if (args.report) {
+                    outputVerifier.feed(data, size);
+                }
             });
         }
         demuxer.setDemuxerHandler(handler);
@@ -1132,7 +1186,13 @@ int main(int argc, char* argv[]) {
     }
 
     progressReporter.finish();
-    if (!args.noStats) {
+    if (args.report) {
+        demuxer.printStatistics();
+        handler.printConversionReport(std::cerr);
+        std::cerr << "Output:\n";
+        outputVerifier.print(std::cerr);
+    }
+    else if (!args.noStats) {
         demuxer.printStatistics();
         if (!args.decodeMmts && handler.getAdtsDropCount() > 0) {
             std::cerr << "ADTS conversion drop: " << handler.getAdtsDropCount() << std::endl;

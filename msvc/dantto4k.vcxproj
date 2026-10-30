@@ -213,6 +213,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$(ProjectDir)..\tools\gener
     <ClCompile Include="../src/mhSiParameterDescriptor.cpp" />
     <ClCompile Include="../src/mmtsRecorder.cpp" />
     <ClCompile Include="../src/mmtsMapWriter.cpp" />
+    <ClCompile Include="../src/tsVerifier.cpp" />
     <ClCompile Include="../src/mmtDescriptorFactory.cpp" />
     <ClCompile Include="../src/mmtTableFactory.cpp" />
     <ClCompile Include="../src/multimediaServiceInformationDescriptor.cpp" />
@@ -340,6 +341,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$(ProjectDir)..\tools\gener
     <ClInclude Include="../src/mhSiParameterDescriptor.h" />
     <ClInclude Include="../src/mmtsRecorder.h" />
     <ClInclude Include="../src/mmtsMapWriter.h" />
+    <ClInclude Include="../src/tsVerifier.h" />
     <ClInclude Include="../src/mmtDescriptorFactory.h" />
     <ClInclude Include="../src/mmtFragment.h" />
     <ClInclude Include="../src/mmtTableFactory.h" />
