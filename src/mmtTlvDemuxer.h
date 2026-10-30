@@ -103,6 +103,10 @@ private:
 	std::map<uint16_t, uint16_t> mapPacketIdByIdx;
 	// Each complete MPT owns only its package, not every stream in the multiplex.
 	std::map<std::vector<uint8_t>, std::set<uint16_t>> packagePacketIds;
+	// The PID each component of a package was given. It outlives the stream, so a
+	// component that leaves the MPT and returns gets its PID back, and no other
+	// component takes that PID in between.
+	std::map<std::pair<std::vector<uint8_t>, int>, uint16_t> componentPacketIds;
 
 	Tlv tlv;
 	CompressedIPPacket compressedIPPacket;

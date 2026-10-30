@@ -757,15 +757,25 @@ void MmtTlvDemuxer::processMmtPackageTable(const Mpt& mpt) {
             if (!target) {
                 continue;
             }
-            auto used = [&](uint16_t pid) {
-                return std::any_of(mapStream.begin(), mapStream.end(), [&](const auto& entry) {
-                    return &entry.second != target && entry.second.outputPacketId == pid;
-                });
-            };
             if (target->outputPacketId) {
                 continue; // Keep PMT/PES PIDs stable across periodic MPTs.
             }
+            const int componentTag = target->getComponentTag();
+            const auto componentKey = std::make_pair(mpt.mmtPackageIdByte, componentTag);
+            auto used = [&](uint16_t pid) {
+                const bool usedByStream = std::any_of(mapStream.begin(), mapStream.end(), [&](const auto& entry) {
+                    return &entry.second != target && entry.second.outputPacketId == pid;
+                });
+                return usedByStream || std::any_of(componentPacketIds.begin(), componentPacketIds.end(), [&](const auto& entry) {
+                    return entry.first != componentKey && entry.second == pid;
+                });
+            };
             uint16_t pid = target->getMpeg2PacketId();
+            if (componentTag != -1) {
+                if (auto known = componentPacketIds.find(componentKey); known != componentPacketIds.end()) {
+                    pid = known->second;
+                }
+            }
             // 0x1FF is PCR; 0xF00+ is reserved for app-data and PMTs.
             if (pid < 0x100 || pid >= 0xF00 || pid == 0x1FF || used(pid)) {
                 pid = 0x200;
@@ -774,6 +784,9 @@ void MmtTlvDemuxer::processMmtPackageTable(const Mpt& mpt) {
                 }
             }
             target->outputPacketId = pid < 0xF00 ? pid : 0x1FFF;
+            if (componentTag != -1 && pid < 0xF00) {
+                componentPacketIds[componentKey] = pid;
+            }
         }
     }
 }
@@ -893,6 +906,7 @@ void MmtTlvDemuxer::clear() {
     mfuData.clear();
     mapStream.clear();
     packagePacketIds.clear();
+    componentPacketIds.clear();
     mapPacketIdByIdx.clear();
     statistics.clear();
 

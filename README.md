@@ -44,6 +44,10 @@ Usage:
       --write-mmtsmap           Write an .mmtsmap sidecar for --decode-mmts output
       --write-mmtsmap-only      Scan input and write only an .mmtsmap sidecar
       --mmtsmap arg             Specify .mmtsmap output path
+      --report                  Print what the conversion produced and left out
+                                to stderr, and verify the TS as it is written
+      --verify                  Check an MPEG-2 TS file; exits with 1 when it
+                                finds problems
       --no-progress             Disable progress display
       --no-stats                Disable packet statistics
       --version                 Show the version
@@ -83,6 +87,30 @@ dantto4k --write-mmtsmap-only input.mmts
 
 ```
 dantto4k --write-mmtsmap-only --mmtsmap output.mmtsmap input.mmts
+```
+
+#### 生成した TS の検証
+
+`--verify` は TS ファイルを読み直して検査します。変換処理や TSDuck とは別に実装しているので、変換側の不具合も検出できます。問題がなければ終了コード 0、問題があれば 1、読めなければ 2 を返します。
+
+```
+dantto4k --verify output.ts
+```
+
+同期、transport_error、continuity counter、セクションの CRC、PAT/PMT の有無、PES のヘッダーと長さ、ES の先頭 (HEVC のスタートコード、ADTS と LOAS の同期ワード)、音声・映像の時刻の逆行、PCR の有無と逆行を確認し、末尾に `problems` と `warnings` の件数を出力します。PCR 間隔が 1 秒を超えると問題、100 ms を超えると警告です。1 秒を超える音声・映像の時刻の飛びも警告です。
+
+#### 変換レポート
+
+`--report` を付けて MPEG-2 TS へ変換すると、終了時に標準エラー出力へ次の内容を報告します。stdout へ出力する場合も有効です。
+
+- TLV と MMT パケットの統計
+- 字幕の変換件数と、音声・字幕・EIT などで捨てたものの件数
+- ES として出力しなかったアセットとその理由
+- TS へ変換しなかった記述子のタグと件数 (テーブル別)
+- 出力した TS を `--verify` と同じ処理で検査した結果
+
+```
+dantto4k --frontend-descrambled --report input.mmts output.ts
 ```
 
 #### データ放送ファイルの書き出し (実験的)

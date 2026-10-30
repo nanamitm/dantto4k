@@ -223,10 +223,25 @@ int main() {
         feed(multiplex, emptySecond, 7);
         require(multiplex.mapStream.empty() && !multiplex.getStreamByIdx(index),
                 "an empty complete MPT must remove the last owned assets");
+        // The PID outlives the stream: both components are gone now, and neither
+        // a newcomer nor a returning one may end up on the other's PID.
+        const uint16_t secondPid = 0x200;
+        feed(multiplex, mpt(0x400, false, MmtTlv::AssetType::hev1, 3, 0), 8);
+        const auto thirdPid = multiplex.getStream(0x400)->getMpeg2PacketId();
+        require(thirdPid != pid && thirdPid != secondPid,
+                "a new component must not take the PID of one that left");
+        feed(multiplex, mpt(0x500, false, MmtTlv::AssetType::hev1, 2, 0), 9);
+        require(multiplex.getStream(0x500)->getMpeg2PacketId() == secondPid,
+                "a returning component must get its PID back, even on another packet_id");
+        feed(multiplex, mpt(0x600, false, MmtTlv::AssetType::hev1, 1, 0), 10);
+        require(multiplex.getStream(0x600)->getMpeg2PacketId() == pid,
+                "a returning component must get the PID its tag gave it");
         multiplex.clear();
         feed(multiplex, second, 1);
         require(multiplex.getStream(0x200)->getStreamIndex() == 0,
                 "clear must reset package ownership and stream indices");
+        require(multiplex.getStream(0x200)->getMpeg2PacketId() == 0x100,
+                "clear must forget the PIDs given to components");
         std::puts("PASS: malformed MPT/ECM rejection and MPU fragment recovery across consecutive, skipped and backward sequences");
         return 0;
     } catch (const std::exception& e) {

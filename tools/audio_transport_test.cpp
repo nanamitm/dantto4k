@@ -4,6 +4,9 @@
 #include "adtsConverter.h"
 #include "demuxerTeeHandler.h"
 #include "mmtsMapWriter.h"
+#include "tsVerifier.h"
+#include "ntp.h"
+#include <sstream>
 #include <iterator>
 #include <cstdio>
 #include <stdexcept>
@@ -183,12 +186,86 @@ static void testLenientFrames() {
     require(packets.size()==1,"useSameStreamMux frame must survive and its truncation must not");
     std::vector<uint8_t> expected={0x56,0xE0,5};expected.insert(expected.end(),same.begin(),same.end());checkPes(packets[0],expected,90000);
 }
+static Plt pltOf(std::initializer_list<uint16_t> services) {
+    Plt plt{};
+    for(uint16_t service : services) {
+        Plt::Entry entry{}; entry.mmtPackageIdByte={static_cast<uint8_t>(service>>8),static_cast<uint8_t>(service)};
+        entry.locationInfos.locationType=0; plt.entries.push_back(std::move(entry));
+    }
+    return plt;
+}
+static void announceStream(RemuxerHandler& remux) {
+    MhSdt sdt{}; sdt.tlvStreamId=1; sdt.currentNextIndicator=true;
+    sdt.services.push_back(std::make_shared<MhSdt::Service>()); sdt.services.back()->serviceId=1;
+    remux.onMhSdtActual(sdt);
+}
+static void testPmtPidSurvivesPltChanges() {
+    config.disableADTSConversion=false;
+    MmtTlvDemuxer demux; RemuxerHandler remux(demux); demux.setDemuxerHandler(remux);
+    announceStream(remux);
+    remux.onPlt(pltOf({1,2}));
+    std::vector<uint8_t> output;remux.setOutputCallback([&](const uint8_t* p,size_t n){output.insert(output.end(),p,p+n);});
+    remux.onPlt(pltOf({2,1}));
+    registerAudio(demux,false,1,0x100,1);
+    require(!pesPackets(output,0x1000).empty() && pesPackets(output,0x1001).empty(),"a reordered PLT must not move a service's PMT");
+    output.clear();
+    remux.onPlt(pltOf({2}));remux.onPlt(pltOf({3,2,1}));
+    registerAudio(demux,false,1,0x100,2);
+    require(!pesPackets(output,0x1000).empty(),"a service that returns to the PLT must get its PMT PID back");
+    remux.clear();announceStream(remux);output.clear();
+    remux.onPlt(pltOf({2,1}));registerAudio(demux,false,1,0x100,3);
+    require(!pesPackets(output,0x1001).empty(),"clear must forget the assigned PMT PIDs");
+}
+static void testVerifierAcceptsRemuxerOutput() {
+    for(bool loas : {false,true}) {
+        config.disableADTSConversion=loas;
+        MmtTlvDemuxer demux; RemuxerHandler remux(demux); demux.setDemuxerHandler(remux);
+        auto verifier=std::make_unique<TsVerifier>();remux.setOutputCallback([&](const uint8_t* p,size_t n){verifier->feed(p,n);});
+        announceStream(remux);remux.onPlt(pltOf({1}));registerAudio(demux);
+        audio(demux,1,FragmentationIndicator::NotFragmented,rawAudio());
+        std::ostringstream report;verifier->print(report);
+        const auto* stats=verifier->getPid(demux.getStream(0x100)->getMpeg2PacketId());
+        require(stats && stats->pes==1 && stats->listedInPmt,report.str().c_str());
+        require(stats->ccErrors==0 && stats->pesLengthErrors==0 && stats->pesHeaderErrors==0 && stats->frameErrors==0,report.str().c_str());
+        require(verifier->getPid(0)->crcErrors==0 && verifier->getPid(0x1000)->crcErrors==0,report.str().c_str());
+    }
+}
+static void testConversionReport() {
+    config.disableADTSConversion=false;
+    MmtTlvDemuxer demux; RemuxerHandler remux(demux); demux.setDemuxerHandler(remux);
+    announceStream(remux);remux.onPlt(pltOf({1}));
+    Mpt mpt{};mpt.mmtPackageIdByte={0,1};
+    Mpt::Asset unknown{};unknown.assetType=0x61626364;
+    MmtGeneralLocationInfo location{};location.locationType=0;location.packetId=0x777;
+    unknown.locationInfos.push_back(location);mpt.assets.push_back(std::move(unknown));
+    remux.onMpt(mpt);
+    std::ostringstream out;remux.printConversionReport(out);const auto text=out.str();
+    require(text.find("service 0x0001 packet_id 0x0777 abcd: unsupported asset type")!=std::string::npos,"an asset left out of the PMT must be named with its reason");
+    require(text.find("dropped")==std::string::npos,"a drop that did not happen must not be listed");
+}
+static void testPcrIntervalStaysWithinLimit() {
+    for(double frameMs : {1000.0/59.94,1000.0/29.97,1000.0/23.976}) {
+        MmtTlvDemuxer demux; RemuxerHandler remux(demux);
+        auto verifier=std::make_unique<TsVerifier>();remux.setOutputCallback([&](const uint8_t* p,size_t n){verifier->feed(p,n);});
+        for(int frame=0;frame<600;++frame) {
+            const double ms=frame*frameMs;
+            NTPv4 ntp{};
+            ntp.transmit_timestamp.seconds=2208988800u+1000u+static_cast<uint32_t>(ms/1000);
+            ntp.transmit_timestamp.fraction=static_cast<uint32_t>((ms/1000-static_cast<uint32_t>(ms/1000))*4294967296.0);
+            remux.onNtp(ntp);
+        }
+        const auto* pcr=verifier->getPid(PCR_PID);
+        require(pcr && pcr->pcrCount>1,"a regular clock must emit PCR");
+        require(pcr->largestPcrInterval90k<=TsVerifier::kPcrWarningInterval90k && pcr->pcrOverWarning==0,"PCR interval must stay within 100 ms");
+        require(pcr->largestPcrInterval90k>=90*50,"PCR must stay sparse: at least 50 ms apart");
+    }
+}
 int main() {
  try {
     for(size_t split=1;split<rawAudio().size();++split) {
         testSplit(split,false,false);testSplit(split,true,false);testSplit(split,false,true);
     }
-    testRecovery();testMiddleAndMalformed();testMaximumFrame();testMultiServicePmtAndMap();testLenientFrames();
+    testRecovery();testMiddleAndMalformed();testMaximumFrame();testMultiServicePmtAndMap();testLenientFrames();testPmtPidSurvivesPltChanges();testVerifierAcceptsRemuxerOutput();testConversionReport();testPcrIntervalStaysWithinLimit();
     std::puts("PASS: fragmented ADTS/LOAS audio, 22.2ch routing, timestamps, PES lengths and loss/size recovery");return 0;
  } catch(const std::exception& e){std::fprintf(stderr,"FAIL: %s\n",e.what());return 1;}
 }

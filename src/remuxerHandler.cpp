@@ -208,6 +208,7 @@ void RemuxerHandler::onSubtitleData(const MmtTlv::MmtStream& mmtStream, const st
 
     // ARIB-TTML
     if (subtitleInfo->subtitleFormat != 0) {
+        subtitleOtherFormatDropCount++;
         return;
     }
 
@@ -263,6 +264,7 @@ void RemuxerHandler::onSubtitleData(const MmtTlv::MmtStream& mmtStream, const st
         if (pending.size() >= MAX_PENDING_SUBTITLE_TTML) {
             subtitleDebugLog("subtitle pending overflow stream=" + std::to_string(streamIndex) +
                 ", dropping oldest");
+            subtitlePendingDropCount++;
             pending.erase(pending.begin());
         }
         pending.push_back(std::move(ttml));
@@ -287,6 +289,7 @@ void RemuxerHandler::convertAndWriteSubtitle(const MmtTlv::MmtStream& mmtStream,
         mapSubtitleDrcsGlyphs[mmtStream.getStreamIndex()], subtitleInfo->tmd == 0b1111);
     subtitleDebugLog("subtitle converted stream=" + std::to_string(mmtStream.getStreamIndex()) +
         " pes=" + std::to_string(output.size()));
+    subtitleDocumentCount++;
     if (output.empty()) {
         return;
     }
@@ -349,6 +352,7 @@ void RemuxerHandler::convertAndWriteSubtitle(const MmtTlv::MmtStream& mmtStream,
             pts = clockPts;
         }
         writeSubtitle(mmtStream, pesData, pts);
+        subtitlePesCount++;
     }
 }
 
@@ -613,8 +617,10 @@ void RemuxerHandler::writePcr(uint64_t pcrBase90k) {
     if (pcrBase90k == MmtTlv::NOPTS_VALUE) {
         return;
     }
-    // Keep PCR sparse but regular enough for DirectShow splitters.
-    if (lastWrittenPcr != 0 && pcrBase90k <= lastWrittenPcr + 90 * 100) {
+    // Keep PCR sparse but regular enough for DirectShow splitters. PCR is only
+    // written when a clock source arrives, at least once per frame, so waiting
+    // 50 ms stays within the 100 ms limit of ISO/IEC 13818-1 at broadcast frame rates.
+    if (lastWrittenPcr != 0 && pcrBase90k < lastWrittenPcr + 90 * 50) {
         return;
     }
 
@@ -836,6 +842,7 @@ void RemuxerHandler::onMhBit(const MmtTlv::MhBit& mhBit) {
                 ts::SIParameterDescriptor::Entry tsEntry;
                 tsEntry.table_id = convertTableId(entry.tableId);
                 if (tsEntry.table_id == 0xFF) {
+                    siParameterEntryDropCount++;
                     continue;
                 }
 
@@ -847,6 +854,9 @@ void RemuxerHandler::onMhBit(const MmtTlv::MhBit& mhBit) {
             tsBit.descs.add(duck, tsDescriptor);
             break;
         }
+        default:
+            noteUnconvertedDescriptor("BIT", descriptor->getDescriptorTag());
+            break;
         }
     }
 
@@ -879,6 +889,7 @@ void RemuxerHandler::onMhBit(const MmtTlv::MhBit& mhBit) {
                     ts::SIParameterDescriptor::Entry tsEntry;
                     tsEntry.table_id = convertTableId(entry.tableId);
                     if (tsEntry.table_id == 0xFF) {
+                        siParameterEntryDropCount++;
                         continue;
                     }
 
@@ -890,6 +901,9 @@ void RemuxerHandler::onMhBit(const MmtTlv::MhBit& mhBit) {
                 tsBroadcaster.descs.add(duck, tsDescriptor);
                 break;
             }
+            default:
+                noteUnconvertedDescriptor("BIT broadcaster", descriptor->getDescriptorTag());
+                break;
             }
         }
 
@@ -933,6 +947,7 @@ void RemuxerHandler::onMhEit(const MmtTlv::MhEit& mhEit) {
 
         tm startTime = EITConvertStartTime(mhEvent->startTime);
         if (!isValidEITStartTime(startTime)) {
+            eitEventDropCount++;
             continue;
         }
         tsEvent.start_time = ts::Time(startTime.tm_year + 1900, startTime.tm_mon + 1, startTime.tm_mday,
@@ -1034,6 +1049,9 @@ void RemuxerHandler::onMhEit(const MmtTlv::MhEit& mhEit) {
                 tsEvent.descs.add(duck, tsDescriptor);
                 break;
             }
+            default:
+                noteUnconvertedDescriptor("EIT", descriptor->getDescriptorTag());
+                break;
             }
         }
 
@@ -1132,6 +1150,9 @@ void RemuxerHandler::onMhSdtActual(const MmtTlv::MhSdt& mhSdt) {
                 tsService.descs.add(duck, tsDescriptor);
                 break;
             }
+            default:
+                noteUnconvertedDescriptor("SDT", descriptor->getDescriptorTag());
+                break;
             }
         }
         tsSdt.services[service->serviceId] = tsService;
@@ -1169,7 +1190,6 @@ void RemuxerHandler::onPlt(const MmtTlv::Plt& plt) {
     ts::PAT pat(plt.version % 32, true, tsid);
     mapService2Pid.clear();
 
-    int i = 0;
     for (auto& item : plt.entries) {
         uint16_t serviceId = 0;
         if (item.mmtPackageIdByte.size() >= 2) {
@@ -1181,13 +1201,12 @@ void RemuxerHandler::onPlt(const MmtTlv::Plt& plt) {
             continue;
         }
 
-        const uint16_t pmtPid = static_cast<uint16_t>(0x1000 + i);
+        const uint16_t pmtPid = pmtPidForService(serviceId);
         if (pmtPid > 0x1FFE) {
             break;
         }
         pat.pmts[serviceId] = pmtPid;
         mapService2Pid[serviceId] = pmtPid;
-        i++;
     }
 
     ts::BinaryTable table;
@@ -1211,6 +1230,25 @@ void RemuxerHandler::onPlt(const MmtTlv::Plt& plt) {
             }
         }
     }
+}
+
+uint16_t RemuxerHandler::pmtPidForService(uint16_t serviceId) {
+    if (auto it = assignedPmtPids.find(serviceId); it != assignedPmtPids.end()) {
+        return it->second;
+    }
+    uint16_t pid = 0x1000;
+    while (pid <= 0x1FFE && std::any_of(assignedPmtPids.begin(), assignedPmtPids.end(),
+        [pid](const auto& entry) { return entry.second == pid; })) {
+        ++pid;
+    }
+    if (pid <= 0x1FFE) {
+        assignedPmtPids[serviceId] = pid;
+    }
+    return pid;
+}
+
+void RemuxerHandler::noteAssetLeftOut(uint16_t serviceId, uint16_t packetId, uint32_t assetType, const char* reason) {
+    leftOutAssets[{ serviceId, packetId }] = { assetType, reason };
 }
 
 void RemuxerHandler::onMpt(const MmtTlv::Mpt& mpt) {
@@ -1240,6 +1278,7 @@ void RemuxerHandler::onMpt(const MmtTlv::Mpt& mpt) {
         for (const auto& locationInfo : asset.locationInfos) {
             if (locationInfo.locationType == 0) {
                 if (!isIndexedAssetType(asset.assetType)) {
+                    noteAssetLeftOut(serviceId, locationInfo.packetId, asset.assetType, "unsupported asset type");
                     continue;
                 }
                 const MmtTlv::MmtStream* mmtStream = demuxer.getStream(locationInfo.packetId);
@@ -1248,10 +1287,12 @@ void RemuxerHandler::onMpt(const MmtTlv::Mpt& mpt) {
                 }
 
                 if (mmtStream->getComponentTag() == -1) {
+                    noteAssetLeftOut(serviceId, locationInfo.packetId, asset.assetType, "no component tag");
                     continue;
                 }
 
                 if (mmtStream->getMpeg2PacketId() > 0x1FFE) {
+                    noteAssetLeftOut(serviceId, locationInfo.packetId, asset.assetType, "no free PID");
                     continue;
                 }
 
@@ -1261,6 +1302,7 @@ void RemuxerHandler::onMpt(const MmtTlv::Mpt& mpt) {
                 // here, and recorders keep only the PIDs listed.
                 if (asset.assetType == MmtTlv::AssetType::stpp &&
                     !mmtStream->isClosedCaption() && !mmtStream->isSuperimposition()) {
+                    noteAssetLeftOut(serviceId, locationInfo.packetId, asset.assetType, "component tag outside the caption ranges");
                     continue;
                 }
 
@@ -1268,6 +1310,8 @@ void RemuxerHandler::onMpt(const MmtTlv::Mpt& mpt) {
                 if (streamType == 0) {
                     // aapp: indexed by the demuxer, but has no MPEG-2 TS
                     // equivalent, so it is not carried into the PMT.
+                    noteAssetLeftOut(serviceId, locationInfo.packetId, asset.assetType,
+                        config.appDataTransport ? "no ES of its own; carried on the app data PID" : "app data transport is off");
                     continue;
                 }
 
@@ -1346,6 +1390,9 @@ void RemuxerHandler::onMpt(const MmtTlv::Mpt& mpt) {
             tsPmt.descs.add(duck, tsDescriptor);
             break;
         }
+        default:
+            noteUnconvertedDescriptor("PMT", descriptor->getDescriptorTag());
+            break;
         }
     }
 
@@ -1463,6 +1510,9 @@ void RemuxerHandler::onNit(const MmtTlv::Nit& nit) {
             }
             break;
         }
+        default:
+            noteUnconvertedDescriptor("NIT", descriptor->getDescriptorTag());
+            break;
         }
     }
 
@@ -1480,6 +1530,9 @@ void RemuxerHandler::onNit(const MmtTlv::Nit& nit) {
                 tsNit.transports[tsid].descs.add(duck, tsDescriptor);
                 break;
             }
+            default:
+                noteUnconvertedDescriptor("NIT transport", descriptor->getDescriptorTag());
+                break;
             }
         }
     }
@@ -1516,8 +1569,47 @@ void RemuxerHandler::onNtp(const MmtTlv::NTPv4& ntp) {
     writeCaptionManagementData(pts);
 }
 
+void RemuxerHandler::printConversionReport(std::ostream& out) const {
+    out << "Conversion:\n";
+    out << " - Subtitle documents converted: " << subtitleDocumentCount << ", PES written: " << subtitlePesCount << "\n";
+
+    const auto printDrop = [&](const char* name, uint64_t count) {
+        if (count > 0) {
+            out << " - " << name << ": " << count << "\n";
+        }
+    };
+    printDrop("Audio frames dropped (ADTS conversion failed)", adtsDropCount);
+    printDrop("Subtitle documents dropped (no timeline anchor)", subtitleTimelineDropCount);
+    printDrop("Subtitle documents dropped (DRCS glyphs never arrived)", subtitlePendingDropCount);
+    printDrop("Subtitle units dropped (not ARIB-TTML)", subtitleOtherFormatDropCount);
+    printDrop("EIT tables dropped (too large for one TS section)", eitSectionDropCount);
+    printDrop("EIT events dropped (invalid start time)", eitEventDropCount);
+    printDrop("SI parameter entries dropped (table has no TS counterpart)", siParameterEntryDropCount);
+
+    if (!leftOutAssets.empty()) {
+        out << "Assets not carried as an elementary stream:\n";
+        for (const auto& [key, asset] : leftOutAssets) {
+            char line[64];
+            std::snprintf(line, sizeof(line), " - service 0x%04x packet_id 0x%04x %c%c%c%c: ", key.first, key.second,
+                static_cast<char>((asset.assetType >> 24) & 0xFF), static_cast<char>((asset.assetType >> 16) & 0xFF),
+                static_cast<char>((asset.assetType >> 8) & 0xFF), static_cast<char>(asset.assetType & 0xFF));
+            out << line << asset.reason << "\n";
+        }
+    }
+
+    if (!unconvertedDescriptors.empty()) {
+        out << "Descriptors with no TS conversion:\n";
+        for (const auto& [key, count] : unconvertedDescriptors) {
+            char line[32];
+            std::snprintf(line, sizeof(line), " tag 0x%04x: ", key.second);
+            out << " - " << key.first << line << count << "\n";
+        }
+    }
+}
+
 void RemuxerHandler::clear() {
     mapService2Pid.clear();
+    assignedPmtPids.clear();
     mapCC.clear();
     mapPesPendingData.clear();
     mapPesPacketIndex.clear();

@@ -1,6 +1,6 @@
 param(
-    [ValidateSet('paths', 'acas', 'casproxy', 'demux', 'mmtp', 'audio', 'bontuner', 'ttml', 'appdata', 'recorder', 'output')]
-    [string[]]$Tests = @('paths', 'acas', 'casproxy', 'demux', 'mmtp', 'audio', 'bontuner', 'ttml', 'appdata', 'recorder', 'output'),
+    [ValidateSet('paths', 'acas', 'casproxy', 'demux', 'mmtp', 'audio', 'bontuner', 'ttml', 'appdata', 'recorder', 'output', 'verify')]
+    [string[]]$Tests = @('paths', 'acas', 'casproxy', 'demux', 'mmtp', 'audio', 'bontuner', 'ttml', 'appdata', 'recorder', 'output', 'verify'),
     [switch]$SkipBuild
 )
 $ErrorActionPreference = 'Stop'
@@ -46,11 +46,13 @@ try {
             appdata { 'app_data_transport_test' }
             recorder { 'mmts_recorder_safety_test' }
             output { 'buffered_output_safety_test' }
+            verify { 'ts_verify_test' }
         }
         $objects = switch ($test) {
             output { @() }
             acas { @('acasHandler', 'acasCard', 'aes', 'config') | ForEach-Object { Get-Item "$objectDir\$_.obj" } }
             casproxy { Get-Item "$objectDir\casProxyClient.obj" }
+            verify { Get-Item "$objectDir\tsVerifier.obj" }
             default {
                 $excluded = @('dantto4k', 'dllmain')
                 if ($test -ne 'bontuner') { $excluded += 'bonTuner' }
