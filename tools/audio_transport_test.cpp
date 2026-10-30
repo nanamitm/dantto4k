@@ -5,6 +5,7 @@
 #include "demuxerTeeHandler.h"
 #include "mmtsMapWriter.h"
 #include "tsVerifier.h"
+#include "ntp.h"
 #include <sstream>
 #include <iterator>
 #include <cstdio>
@@ -242,12 +243,29 @@ static void testConversionReport() {
     require(text.find("service 0x0001 packet_id 0x0777 abcd: unsupported asset type")!=std::string::npos,"an asset left out of the PMT must be named with its reason");
     require(text.find("dropped")==std::string::npos,"a drop that did not happen must not be listed");
 }
+static void testPcrIntervalStaysWithinLimit() {
+    for(double frameMs : {1000.0/59.94,1000.0/29.97,1000.0/23.976}) {
+        MmtTlvDemuxer demux; RemuxerHandler remux(demux);
+        auto verifier=std::make_unique<TsVerifier>();remux.setOutputCallback([&](const uint8_t* p,size_t n){verifier->feed(p,n);});
+        for(int frame=0;frame<600;++frame) {
+            const double ms=frame*frameMs;
+            NTPv4 ntp{};
+            ntp.transmit_timestamp.seconds=2208988800u+1000u+static_cast<uint32_t>(ms/1000);
+            ntp.transmit_timestamp.fraction=static_cast<uint32_t>((ms/1000-static_cast<uint32_t>(ms/1000))*4294967296.0);
+            remux.onNtp(ntp);
+        }
+        const auto* pcr=verifier->getPid(PCR_PID);
+        require(pcr && pcr->pcrCount>1,"a regular clock must emit PCR");
+        require(pcr->largestPcrInterval90k<=TsVerifier::kPcrWarningInterval90k && pcr->pcrOverWarning==0,"PCR interval must stay within 100 ms");
+        require(pcr->largestPcrInterval90k>=90*50,"PCR must stay sparse: at least 50 ms apart");
+    }
+}
 int main() {
  try {
     for(size_t split=1;split<rawAudio().size();++split) {
         testSplit(split,false,false);testSplit(split,true,false);testSplit(split,false,true);
     }
-    testRecovery();testMiddleAndMalformed();testMaximumFrame();testMultiServicePmtAndMap();testLenientFrames();testPmtPidSurvivesPltChanges();testVerifierAcceptsRemuxerOutput();testConversionReport();
+    testRecovery();testMiddleAndMalformed();testMaximumFrame();testMultiServicePmtAndMap();testLenientFrames();testPmtPidSurvivesPltChanges();testVerifierAcceptsRemuxerOutput();testConversionReport();testPcrIntervalStaysWithinLimit();
     std::puts("PASS: fragmented ADTS/LOAS audio, 22.2ch routing, timestamps, PES lengths and loss/size recovery");return 0;
  } catch(const std::exception& e){std::fprintf(stderr,"FAIL: %s\n",e.what());return 1;}
 }

@@ -617,8 +617,10 @@ void RemuxerHandler::writePcr(uint64_t pcrBase90k) {
     if (pcrBase90k == MmtTlv::NOPTS_VALUE) {
         return;
     }
-    // Keep PCR sparse but regular enough for DirectShow splitters.
-    if (lastWrittenPcr != 0 && pcrBase90k <= lastWrittenPcr + 90 * 100) {
+    // Keep PCR sparse but regular enough for DirectShow splitters. PCR is only
+    // written when a clock source arrives, at least once per frame, so waiting
+    // 50 ms stays within the 100 ms limit of ISO/IEC 13818-1 at broadcast frame rates.
+    if (lastWrittenPcr != 0 && pcrBase90k < lastWrittenPcr + 90 * 50) {
         return;
     }
 
