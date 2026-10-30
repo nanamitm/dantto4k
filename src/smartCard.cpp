@@ -4,6 +4,7 @@
 
 #ifdef WIN32
 std::atomic<bool> g_processDetaching{false};
+std::atomic<bool> g_processTerminating{false};
 #endif
 
 bool LocalSmartCard::init() {
@@ -80,6 +81,13 @@ LocalSmartCard::LocalSmartCard() {
 }
 
 LocalSmartCard::~LocalSmartCard() {
+#ifdef WIN32
+    // During ExitProcess, WinSCard's helper threads have already been killed.
+    // SCardDisconnect/ReleaseContext can wait forever in DLL static teardown.
+    // Windows reclaims these process-owned resources. Normal destruction and
+    // explicit FreeLibrary still disconnect and release the context below.
+    if (g_processTerminating.load(std::memory_order_relaxed)) return;
+#endif
     disconnect();
 
     if (hContext != 0) {

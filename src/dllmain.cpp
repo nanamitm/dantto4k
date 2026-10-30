@@ -195,6 +195,7 @@ BOOL APIENTRY DllMain(HINSTANCE hModule, DWORD fdwReason, LPVOID lpReserved) {
         // the smart card it owns - after this returns, still under the loader
         // lock. Tell them not to touch the loader from there.
         g_processDetaching.store(true, std::memory_order_relaxed);
+        g_processTerminating.store(lpReserved != nullptr, std::memory_order_relaxed);
         break;
     }
 
