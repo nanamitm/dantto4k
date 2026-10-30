@@ -12,6 +12,8 @@
 // destructors after the user DllMain returns and still holds the loader lock,
 // and FreeLibrary() must not be called from there - see ~LocalSmartCard().
 extern std::atomic<bool> g_processDetaching;
+// ExitProcess has already stopped other threads; PC/SC waits cannot complete.
+extern std::atomic<bool> g_processTerminating;
 #endif
 
 class ApduResponse {
