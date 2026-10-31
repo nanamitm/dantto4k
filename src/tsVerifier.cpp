@@ -17,6 +17,10 @@ constexpr size_t kPesHeaderCapacity = 9 + 255 + 4;
 constexpr std::array<uint16_t, 7> kSectionPids = { 0x0000, 0x0010, 0x0011, 0x0012, 0x0014, 0x0024, 0x0029 };
 
 constexpr uint8_t kStreamTypePrivateSection = 0x05;
+// DSM-CC carousels: broadcast TS carries data broadcasting on these as sections.
+constexpr uint8_t kStreamTypeDsmccUn = 0x0B;
+constexpr uint8_t kStreamTypeDsmccDescriptors = 0x0C;
+constexpr uint8_t kStreamTypeDsmccSections = 0x0D;
 constexpr uint8_t kStreamTypeAac = 0x0F;
 constexpr uint8_t kStreamTypeAacLatm = 0x11;
 constexpr uint8_t kStreamTypeHevc = 0x24;
@@ -303,7 +307,14 @@ void TsVerifier::processSectionPayload(uint16_t pid, PidState& st, const uint8_t
         appendSectionData(pid, st, payload + 1, pointer);
     }
     if (st.sectionOpen && !st.section.empty()) {
-        ++st.stats.incompleteSections;
+        // A continuity break closes the section first, so this one ended while the packets kept
+        // coming. Broadcast carousels are seen cut short like this when they change.
+        if (st.carousel) {
+            ++st.stats.cutCarouselSections;
+        }
+        else {
+            ++st.stats.incompleteSections;
+        }
     }
     st.section.clear();
     st.sectionOpen = true;
@@ -396,7 +407,10 @@ void TsVerifier::processPmt(uint16_t pid, const uint8_t* section, size_t size) {
         PidState& es = state(esPid);
         es.stats.streamType = streamType;
         es.stats.listedInPmt = true;
-        es.kind = streamType == kStreamTypePrivateSection ? PidKind::Section : PidKind::Pes;
+        const bool sections = streamType == kStreamTypePrivateSection || streamType == kStreamTypeDsmccUn ||
+            streamType == kStreamTypeDsmccDescriptors || streamType == kStreamTypeDsmccSections;
+        es.kind = sections ? PidKind::Section : PidKind::Pes;
+        es.carousel = sections && streamType != kStreamTypePrivateSection;
 
         for (size_t d = pos + 5; d + 2 <= descriptorsEnd; d += 2 + static_cast<size_t>(section[d + 1])) {
             if (section[d] == 0x52 && section[d + 1] >= 1 && d + 3 <= descriptorsEnd) {
@@ -498,6 +512,8 @@ void TsVerifier::parsePesHeader(PidState& st) {
     if (h.size() < 9 + headerLength) {
         return;
     }
+    // Without data_alignment_indicator a PES may begin mid frame and need not carry a PTS.
+    st.pesAligned = (h[6] & 0x04) != 0;
 
     st.pesParsed = true;
     st.pesPayloadOffset = 9 + headerLength;
@@ -512,7 +528,9 @@ void TsVerifier::parsePesHeader(PidState& st) {
 
     if (isMediaStreamId(streamId)) {
         if (!hasPts) {
-            ++st.stats.missingTimestamps;
+            if (st.pesAligned) {
+                ++st.stats.missingTimestamps;
+            }
         }
         else {
             // Decode order is what must never go backward; PTS reorders with B pictures.
@@ -522,6 +540,10 @@ void TsVerifier::parsePesHeader(PidState& st) {
 }
 
 void TsVerifier::checkPesFrame(PidState& st) {
+    if (!st.pesAligned) {
+        st.frameChecked = true;
+        return;
+    }
     const auto& h = st.pesHeader;
     if (h.size() <= st.pesPayloadOffset) {
         return;
@@ -612,7 +634,7 @@ uint64_t TsVerifier::countWarnings() const {
     uint64_t warnings = 0;
     for (const auto& entry : pids) {
         if (entry) {
-            warnings += entry->stats.pcrOverWarning + entry->stats.timestampGaps;
+            warnings += entry->stats.pcrOverWarning + entry->stats.timestampGaps + entry->stats.cutCarouselSections;
             // Scrambled input, for one, leaves a program with a PMT and no media.
             if (entry->stats.listedInPmt && entry->stats.packets == 0) {
                 ++warnings;
@@ -712,6 +734,15 @@ void TsVerifier::print(std::ostream& out) const {
         out << "\nPIDs in a PMT with no data:" << silent << '\n';
     }
 
+    uint64_t cutCarouselSections = 0;
+    for (const auto& entry : pids) {
+        if (entry) {
+            cutCarouselSections += entry->stats.cutCarouselSections;
+        }
+    }
+    if (cutCarouselSections > 0) {
+        out << format("\nDSM-CC sections cut short by the next section: %llu\n", static_cast<unsigned long long>(cutCarouselSections));
+    }
     out << format("\nproblems: %llu, warnings: %llu\n",
         static_cast<unsigned long long>(countProblems()),
         static_cast<unsigned long long>(countWarnings()));
