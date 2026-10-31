@@ -135,6 +135,8 @@ MH-AIT・DDMT・DAMT・DCCT・EMT はそのまま、アプリケーションの�
 ### BonDriver_dantto4k.dll
 リアルタイムで復号化とMPEG-2 TSへの変換を行うBonDriverです。
 BonDriver_dantto4k.iniで設定されたBonDriverをロードして、復号化とMPEG-2 TSへの変換を行います。
+通常のMPEG-2 TSも扱うBonDriverを読み込む場合は、`[bondriver]`の`passthroughSpaces`にTSのチューニング空間番号をカンマ区切りで指定します。指定した空間では変換せずにそのまま渡します（例: `passthroughSpaces=0,1,2,3`）。
+
 dantto4kは64bitで配布しており、BonRecTestおよびBonDriver_BDAは64bitである必要があります。
 
 EDCB 連携向けに、復号済み TLV/MMTS を複数ファイルへ同時保存する export も提供します。

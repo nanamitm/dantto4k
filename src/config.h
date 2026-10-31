@@ -1,4 +1,6 @@
 #pragma once
+#include <cstdint>
+#include <set>
 #include <string>
 #include <fstream>
 
@@ -6,6 +8,8 @@ class Config {
 public:
     std::string bondriverPath{};
     std::string mmtsDumpPath{};
+    // Tuning spaces whose stream is already MPEG-2 TS: passed on as received.
+    std::set<uint32_t> passthroughSpaces{};
     std::string smartCardReaderName{};
     std::string casProxyServer{};
     std::string customWinscardDLL{};

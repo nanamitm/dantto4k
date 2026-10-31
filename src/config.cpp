@@ -1,6 +1,8 @@
 #include "config.h"
 #include <algorithm>
 #include <iostream>
+#include <sstream>
+#include <stdexcept>
 
 Config config = Config{};
 
@@ -46,6 +48,17 @@ Config loadConfig(const std::string& filename) {
 
                  if (key == "bondriverPath") {
                      config.bondriverPath = value;
+                 }
+                 if (key == "passthroughSpaces") {
+                     std::stringstream spaces(value);
+                     std::string space;
+                     while (std::getline(spaces, space, ',')) {
+                         space = trim(space);
+                         if (space.empty() || space.find_first_not_of("0123456789") != std::string::npos || space.size() > 9) {
+                             throw std::runtime_error("passthroughSpaces must be comma separated tuning space numbers");
+                         }
+                         config.passthroughSpaces.insert(static_cast<uint32_t>(std::stoul(space)));
+                     }
                  }
                  if (key == "mmtsDumpPath") {
                      config.mmtsDumpPath = value;

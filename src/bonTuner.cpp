@@ -83,6 +83,10 @@ const bool CBonTuner::GetTsStream(uint8_t** ppDst, uint32_t* pdwSize, uint32_t* 
 	*pdwRemain = 0;
 	if (!pBonDriver2) return false;
 
+	if (isPassthrough()) {
+		return pBonDriver2->GetTsStream(ppDst, pdwSize, pdwRemain);
+	}
+
 	bool ret;
 	do {
 		uint8_t* source = nullptr;
@@ -173,7 +177,16 @@ const bool CBonTuner::SetChannel(const uint32_t dwSpace, const uint32_t dwChanne
 	g_bonDriverContext.demuxer.clear();
 	g_bonDriverContext.handler.clear();
 
-	if (config.mmtsDumpPath != "") {
+	const bool passthroughSpace = config.passthroughSpaces.count(dwSpace) != 0;
+	passthrough.store(passthroughSpace, std::memory_order_release);
+
+	if (passthroughSpace) {
+		if (g_bonDriverContext.mmtsDumpFs) {
+			g_bonDriverContext.mmtsDumpFs->close();
+			g_bonDriverContext.mmtsDumpFs.reset();
+		}
+	}
+	else if (config.mmtsDumpPath != "") {
 		if (g_bonDriverContext.mmtsDumpFs) {
             g_bonDriverContext.mmtsDumpFs->close();
             g_bonDriverContext.mmtsDumpFs.reset();
