@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include <vector>
 #include <mutex>
 #include "IBonDriver2.h"
@@ -41,7 +42,11 @@ public:
 
 	void Release(void);
 
+	// The selected tuning space carries MPEG-2 TS and skips the MMT/TLV conversion.
+	bool isPassthrough() const { return passthrough.load(std::memory_order_acquire); }
+
 protected:
+	std::atomic<bool> passthrough{false};
 	IBonDriver2* pBonDriver2 = nullptr;
 	std::vector<uint8_t> inputBuffer;
 	std::vector<uint8_t> outputBuffer;

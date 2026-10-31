@@ -135,6 +135,11 @@ extern "C" __declspec(dllexport) IBonDriver* CreateBonDriver() {
 }
 
 
+// Write_MMTS falls back to a plain .ts recording while this is FALSE.
+extern "C" __declspec(dllexport) BOOL WINAPI IsMmtsRecordingAvailable() {
+    return g_bonDriverContext.bonTuner.isPassthrough() ? FALSE : TRUE;
+}
+
 extern "C" __declspec(dllexport) BOOL WINAPI StartMmtsSave(const wchar_t* path, BOOL overwrite) {
     if (legacyMmtsSessionId != 0) {
         MmtsRecorder::Stop(legacyMmtsSessionId);
