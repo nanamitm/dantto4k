@@ -21,6 +21,7 @@ public:
 		uint64_t sections{0};
 		uint64_t crcErrors{0};
 		uint64_t incompleteSections{0};
+		uint64_t cutCarouselSections{0};
 		uint64_t pes{0};
 		uint64_t pesBytes{0};
 		uint64_t pesHeaderErrors{0};
@@ -82,6 +83,8 @@ private:
 		bool pesOpen{false};
 		bool pesDamaged{false};
 		bool pesParsed{false};
+		bool pesAligned{false};
+		bool carousel{false};
 		bool frameChecked{false};
 		size_t pesPayloadOffset{0};
 		uint32_t pesDeclaredLength{0};

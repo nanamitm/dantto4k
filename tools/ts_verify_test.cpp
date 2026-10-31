@@ -16,6 +16,7 @@ constexpr uint16_t kPcrPid = 0x01FF;
 constexpr uint16_t kAudioPid = 0x0110;
 constexpr uint16_t kVideoPid = 0x0100;
 constexpr uint16_t kSectionPid = 0x0F00;
+constexpr uint16_t kCarouselPid = 0x0140;
 
 static uint32_t crc32Mpeg(const uint8_t* data, size_t size) {
     uint32_t crc = 0xFFFFFFFF;
@@ -100,7 +101,8 @@ static Bytes pmtSection() {
     Bytes body = { static_cast<uint8_t>(0xE0 | (kPcrPid >> 8)), static_cast<uint8_t>(kPcrPid), 0xF0, 0,
         0x0F, static_cast<uint8_t>(0xE0 | (kAudioPid >> 8)), static_cast<uint8_t>(kAudioPid), 0xF0, 3, 0x52, 1, 0x10,
         0x24, static_cast<uint8_t>(0xE0 | (kVideoPid >> 8)), static_cast<uint8_t>(kVideoPid), 0xF0, 0,
-        0x05, static_cast<uint8_t>(0xE0 | (kSectionPid >> 8)), static_cast<uint8_t>(kSectionPid), 0xF0, 0 };
+        0x05, static_cast<uint8_t>(0xE0 | (kSectionPid >> 8)), static_cast<uint8_t>(kSectionPid), 0xF0, 0,
+        0x0D, static_cast<uint8_t>(0xE0 | (kCarouselPid >> 8)), static_cast<uint8_t>(kCarouselPid), 0xF0, 0 };
     Bytes s = { 0x02, 0xB0, static_cast<uint8_t>(5 + body.size() + 4), 0x00, 0x01, 0xC1, 0, 0 };
     s.insert(s.end(), body.begin(), body.end());
     appendCrc(s);
@@ -115,9 +117,9 @@ static void putTimestamp(Bytes& out, uint8_t prefix, uint64_t value) {
     out.push_back(static_cast<uint8_t>((value << 1) | 1));
 }
 
-static Bytes audioPes(uint64_t pts, int declaredLengthDelta = 0, uint8_t firstByte = 0xFF) {
+static Bytes audioPes(uint64_t pts, int declaredLengthDelta = 0, uint8_t firstByte = 0xFF, uint8_t flags = 0x84) {
     Bytes frame = { firstByte, 0xF1, 0x50, 0x80, 0x01, 0x00, 0xFC, 0xAA, 0xBB };
-    Bytes pes = { 0, 0, 1, 0xC0, 0, 0, 0x80, 0x80, 5 };
+    Bytes pes = { 0, 0, 1, 0xC0, 0, 0, flags, 0x80, 5 };
     putTimestamp(pes, 2, pts);
     pes.insert(pes.end(), frame.begin(), frame.end());
     const size_t length = pes.size() - 6 + static_cast<size_t>(declaredLengthDelta);
@@ -134,6 +136,15 @@ static Bytes videoPes(uint64_t pts, uint64_t dts) {
     return pes;
 }
 
+static Bytes carouselSection(bool corrupt = false) {
+    Bytes s = { 0x3C, 0xB0, 9, 0x00, 0x01, 0xC1, 0, 0 };
+    appendCrc(s);
+    if (corrupt) {
+        s[3] ^= 0x01;
+    }
+    return s;
+}
+
 static Stream cleanStream() {
     Stream s;
     s.section(0, patSection());
@@ -141,6 +152,7 @@ static Stream cleanStream() {
     Bytes app = { 0xC0, 0xB0, 9, 0x00, 0x01, 0xC1, 0, 0 };
     appendCrc(app);
     s.section(kSectionPid, app);
+    s.section(kCarouselPid, carouselSection());
     for (uint64_t i = 0; i < 20; ++i) {
         s.pcr(90000 + i * 4500);
         s.packet(kVideoPid, true, videoPes(100000 + i * 3003 + 6006, 100000 + i * 3003));
@@ -172,6 +184,8 @@ static void testClean() {
     require(pcr && pcr->pcrCount == 20 && pcr->largestPcrInterval90k == 4500, "PCR must be read from the adaptation field");
     const auto* app = v->getPid(kSectionPid);
     require(app && app->sections == 1 && app->crcErrors == 0, "a stream_type 0x05 PID carries sections");
+    const auto* carousel = v->getPid(kCarouselPid);
+    require(carousel && carousel->sections == 1 && carousel->pesHeaderErrors == 0, "a stream_type 0x0D PID carries sections");
     require(out.str().find("problems: 0") != std::string::npos, "the summary must state the problem count");
 }
 
@@ -223,6 +237,10 @@ static void testDefects() {
         [](const TsVerifier& v) { return v.getPid(kAudioPid)->timestampsBackward == 1; });
     expectProblem("a bad ADTS sync", [](Stream& s) { s.packet(kAudioPid, true, audioPes(200000, 0, 0x12)); },
         [](const TsVerifier& v) { return v.getPid(kAudioPid)->frameErrors == 1; });
+    expectProblem("a corrupt carousel section", [](Stream& s) { s.section(kCarouselPid, carouselSection(true)); },
+        [](const TsVerifier& v) { return v.getPid(kCarouselPid)->crcErrors == 1; });
+    expectProblem("an aligned audio PES without a PTS", [](Stream& s) { s.packet(kAudioPid, true, Bytes{ 0, 0, 1, 0xC0, 0, 6, 0x84, 0, 0, 0xFF, 0xF1, 0x50 }); },
+        [](const TsVerifier& v) { return v.getPid(kAudioPid)->missingTimestamps == 1; });
     expectProblem("a PES without a start code", [](Stream& s) { s.packet(kAudioPid, true, Bytes{ 1, 2, 3, 4 }); },
         [](const TsVerifier& v) { return v.getPid(kAudioPid)->pesHeaderErrors == 1; });
     expectProblem("a transport error", [](Stream& s) { s.bytes[188 * 3 + 1] |= 0x80; },
@@ -245,8 +263,8 @@ static void testDefects() {
     const auto silent = verify(noPcr.bytes);
     std::ostringstream silentOut;
     silent->print(silentOut);
-    require(silent->countWarnings() == 3, "each PID a PMT lists without data is a warning");
-    require(silentOut.str().find("no data: 0x0100 0x0110 0x0f00") != std::string::npos, "PIDs without data must be named");
+    require(silent->countWarnings() == 4, "each PID a PMT lists without data is a warning");
+    require(silentOut.str().find("no data: 0x0100 0x0110 0x0140 0x0f00") != std::string::npos, "PIDs without data must be named");
 }
 
 static void testTolerated() {
@@ -271,6 +289,21 @@ static void testTolerated() {
     gap.packet(kAudioPid, true, audioPes(100000 + 19 * 1920 + 200000));
     const auto gapped = verify(gap.bytes);
     require(gapped->countProblems() == 0 && gapped->getPid(kAudioPid)->timestampGaps == 1, "a media gap is only a warning");
+
+    // Broadcast audio: frames span PES packets, and only some PES packets carry a PTS.
+    auto spanning = cleanStream();
+    spanning.packet(kAudioPid, true, audioPes(100000 + 20 * 1920, 0, 0x46, 0x80));
+    spanning.packet(kAudioPid, true, Bytes{ 0, 0, 1, 0xC0, 0, 6, 0x80, 0, 0, 0x46, 0x64, 0xB0 });
+    const auto spanned = verify(spanning.bytes);
+    require(spanned->countProblems() == 0 && spanned->getPid(kAudioPid)->frameErrors == 0 && spanned->getPid(kAudioPid)->missingTimestamps == 0,
+        "an unaligned PES may begin mid frame and need not carry a PTS");
+
+    auto cut = cleanStream();
+    cut.packet(kCarouselPid, true, Bytes{ 0, 0x3C, 0xB0, 0x40, 1, 2, 3 });
+    cut.section(kCarouselPid, carouselSection());
+    const auto cutShort = verify(cut.bytes);
+    require(cutShort->countProblems() == 0 && cutShort->countWarnings() == 1 && cutShort->getPid(kCarouselPid)->cutCarouselSections == 1,
+        "a carousel section cut short without a continuity break is only a warning");
 
     auto wrap = cleanStream();
     wrap.packet(kAudioPid, true, audioPes(1000));
