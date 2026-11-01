@@ -87,5 +87,5 @@ jobs:
           gh release upload $tag $env:PACKAGE_PATH --clobber
         }
         else {
-          gh release create $tag $env:PACKAGE_PATH --title $tag --notes "Windows x64 static build"
+          gh release create $tag $env:PACKAGE_PATH --title $tag --notes ""
         }
