@@ -440,22 +440,31 @@ std::vector<std::vector<Point>> flattenPath(const SvgPath& path) {
     return paths;
 }
 
+// SVG fonts fill with the nonzero rule (the SVG default; a glyph has no
+// fill-rule of its own). Even-odd punched a hole wherever two contours of the
+// same direction overlapped, which fonts built from separate strokes do.
 bool pointInPath(const std::vector<std::vector<Point>>& paths, double x, double y) {
-    bool inside = false;
+    int winding = 0;
     for (const auto& path : paths) {
         if (path.size() < 3) {
             continue;
         }
         for (size_t i = 0, j = path.size() - 1; i < path.size(); j = i++) {
-            const auto& pi = path[i];
-            const auto& pj = path[j];
-            if (((pi.y > y) != (pj.y > y)) &&
-                (x < (pj.x - pi.x) * (y - pi.y) / (pj.y - pi.y + 0.000001) + pi.x)) {
-                inside = !inside;
+            const auto& from = path[j];
+            const auto& to = path[i];
+            // Which side of the edge the point lies on; positive is left.
+            const double side = (to.x - from.x) * (y - from.y) - (x - from.x) * (to.y - from.y);
+            if (from.y <= y) {
+                if (to.y > y && side > 0) {
+                    ++winding;
+                }
+            }
+            else if (to.y <= y && side < 0) {
+                --winding;
             }
         }
     }
-    return inside;
+    return winding != 0;
 }
 
 std::vector<uint8_t> rasterizeGlyph(const DrcsGlyph& glyph, uint8_t width, uint8_t height) {

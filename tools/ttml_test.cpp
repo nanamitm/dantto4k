@@ -4,13 +4,18 @@
 //
 // Build (x64 Native Tools Command Prompt, from this directory):
 //
-//   cl /nologo /O2 /EHsc /std:c++20 /I..\src ttml_test.cpp ^
+//   cl /nologo /O2 /EHsc /std:c++20 /utf-8 /I..\src ttml_test.cpp ^
 //      ..\src\ttml\parser.cpp ..\src\ttml\resolver.cpp ..\src\ttml\style.cpp ^
-//      ..\src\ttml\b24_converter.cpp ..\src\ttml\drcs.cpp ^
+//      ..\src\ttml\b24_converter.cpp ..\src\ttml\drcs.cpp ..\src\ttml\drcs_font.cpp ^
 //      ..\src\aribTextEncoder.cpp ..\src\aribCharsetEncoder.cpp ^
 //      ..\src\aribCharsetTables.cpp ..\src\b24Color.cpp ..\src\config.cpp ^
 //      ..\src\additionalAribSubtitleInfo.cpp ..\src\ntpTimestamp.cpp ^
-//      ..\src\timebase.cpp ..\src\pugixml.cpp /Fe:ttml_test.exe
+//      ..\src\timebase.cpp ..\src\pugixml.cpp /Fe:ttml_test.exe ^
+//      /link gdi32.lib user32.lib
+//
+// drcs_font.cpp draws characters a caption has no code for with GDI, hence
+// the two libraries. tools\test-regressions.ps1 -Tests ttml builds the same
+// test against the Release objects.
 //
 // Exits non-zero when a check fails, so it can be dropped into a build step.
 #include "ttml/parser.h"
@@ -495,6 +500,24 @@ int main() {
             auto conv = convert(*huge);
             check(!conv.outputs.empty(), "a 1e30px line height converts (clamped)");
         }
+    }
+
+    // SVG fonts fill with the nonzero rule. Fonts built from separate strokes
+    // overlap contours of the same direction, and even-odd left a hole in the
+    // overlap.
+    std::printf("15. DRCS glyphs fill overlapping contours (nonzero rule)\n");
+    {
+        const auto solid = rasterize("M100,100 L900,100 L900,900 L100,900 z");
+        const auto overlapping = rasterize("M100,100 L600,100 L600,900 L100,900 z"
+                                           " M400,100 L900,100 L900,900 L400,900 z");
+        check(!overlapping.empty() && overlapping == solid,
+              "two same-direction contours fill their overlap");
+
+        // A counter drawn in the opposite direction is still a hole.
+        const auto counter = rasterize("M100,100 L900,100 L900,900 L100,900 z"
+                                       " M400,400 L400,600 L600,600 L600,400 z");
+        check(!counter.empty() && patternBits(counter) < patternBits(solid),
+              "an opposite-direction contour still cuts a hole");
     }
 
     std::printf("\n%s (%d failure(s))\n", failures ? "FAILED" : "ALL PASS", failures);
