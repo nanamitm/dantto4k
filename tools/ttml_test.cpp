@@ -497,6 +497,24 @@ int main() {
         }
     }
 
+    // SVG fonts fill with the nonzero rule. Fonts built from separate strokes
+    // overlap contours of the same direction, and even-odd left a hole in the
+    // overlap.
+    std::printf("15. DRCS glyphs fill overlapping contours (nonzero rule)\n");
+    {
+        const auto solid = rasterize("M100,100 L900,100 L900,900 L100,900 z");
+        const auto overlapping = rasterize("M100,100 L600,100 L600,900 L100,900 z"
+                                           " M400,100 L900,100 L900,900 L400,900 z");
+        check(!overlapping.empty() && overlapping == solid,
+              "two same-direction contours fill their overlap");
+
+        // A counter drawn in the opposite direction is still a hole.
+        const auto counter = rasterize("M100,100 L900,100 L900,900 L100,900 z"
+                                       " M400,400 L400,600 L600,600 L600,400 z");
+        check(!counter.empty() && patternBits(counter) < patternBits(solid),
+              "an opposite-direction contour still cuts a hole");
+    }
+
     std::printf("\n%s (%d failure(s))\n", failures ? "FAILED" : "ALL PASS", failures);
     return failures ? 1 : 0;
 }
