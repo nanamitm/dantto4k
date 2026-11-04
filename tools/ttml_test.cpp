@@ -4,13 +4,18 @@
 //
 // Build (x64 Native Tools Command Prompt, from this directory):
 //
-//   cl /nologo /O2 /EHsc /std:c++20 /I..\src ttml_test.cpp ^
+//   cl /nologo /O2 /EHsc /std:c++20 /utf-8 /I..\src ttml_test.cpp ^
 //      ..\src\ttml\parser.cpp ..\src\ttml\resolver.cpp ..\src\ttml\style.cpp ^
-//      ..\src\ttml\b24_converter.cpp ..\src\ttml\drcs.cpp ^
+//      ..\src\ttml\b24_converter.cpp ..\src\ttml\drcs.cpp ..\src\ttml\drcs_font.cpp ^
 //      ..\src\aribTextEncoder.cpp ..\src\aribCharsetEncoder.cpp ^
 //      ..\src\aribCharsetTables.cpp ..\src\b24Color.cpp ..\src\config.cpp ^
 //      ..\src\additionalAribSubtitleInfo.cpp ..\src\ntpTimestamp.cpp ^
-//      ..\src\timebase.cpp ..\src\pugixml.cpp /Fe:ttml_test.exe
+//      ..\src\timebase.cpp ..\src\pugixml.cpp /Fe:ttml_test.exe ^
+//      /link gdi32.lib user32.lib
+//
+// drcs_font.cpp draws characters a caption has no code for with GDI, hence
+// the two libraries. tools\test-regressions.ps1 -Tests ttml builds the same
+// test against the Release objects.
 //
 // Exits non-zero when a check fails, so it can be dropped into a build step.
 #include "ttml/parser.h"
