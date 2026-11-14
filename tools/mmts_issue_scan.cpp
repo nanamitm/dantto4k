@@ -14,7 +14,7 @@
 //
 //   cl /nologo /O2 /EHsc /std:c++20 /utf-8 /DWIN32 /DWIN32_LEAN_AND_MEAN ^
 //      /D_CRT_SECURE_NO_WARNINGS /I..\src ^
-//      /I..\thirdparty\asio\asio\include ^
+//      /I..\thirdparty\asio\include ^
 //      mmts_issue_scan.cpp @sources.rsp /Fe:mmts_issue_scan.exe ^
 //      /link winscard.lib gdi32.lib user32.lib ^
 //      /MANIFEST:EMBED /MANIFESTINPUT:..\msvc\utf8.manifest

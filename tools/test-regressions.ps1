@@ -17,7 +17,7 @@ $objectDir = "$repo\msvc\x64\Release\dantto4k"
 $tsduck = "$repo\thirdparty\tsduck"
 $buildDir = "$repo\work\regression-tests"
 New-Item -ItemType Directory -Force $buildDir | Out-Null
-$includeDirs = @("$repo\src", "$repo\thirdparty\asio\asio\include", "$tsduck\bin\include")
+$includeDirs = @("$repo\src", "$repo\thirdparty\asio\include", "$tsduck\bin\include")
 if ($Tests -contains 'bontuner' -or $Tests -contains 'audio') {
     foreach ($library in @('libtscore', 'libtsduck')) {
         $includeDirs += Get-ChildItem "$tsduck\src\$library" -Recurse -Filter '*.h' |
